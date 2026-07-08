@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     listing_fetch_timeout_seconds: float = 8.0
     listing_max_images: int = 5
     l5_recent_claim_window: int = 40
+    l1_model_path: str = ""
+    l1_model_device: str = "auto"
     api_auth_enabled: bool = False
     admin_api_token: str = ""
     default_tenant_rate_limit_requests: int = 120
