@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.local
+*.key
+*.pem
+
+# ML artifacts
+*.pt
+*.pth
+*.ckpt
+*.onnx
+data/
+datasets/
+checkpoints/
+runs/
+wandb/
+mlruns/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+*.log
+npm-debug.log*
+
+# Object store / local infra
+minio-data/
+pgdata/
+qdrant-storage/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

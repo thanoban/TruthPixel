@@ -1,0 +1,13 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.7
+pydantic-settings>=2.3
+pillow>=10.3
+langgraph>=0.2.60
+langchain-core>=0.3
+# Vertex AI agents (optional at runtime — stub LLM used when credentials absent)
+langchain-google-vertexai>=2.0
+httpx>=0.27
+pytest>=8.2
+pytest-asyncio>=0.23
