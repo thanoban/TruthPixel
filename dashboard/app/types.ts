@@ -141,3 +141,7 @@ export function formatTimestamp(value: string | null | undefined): string {
 export function humanizeEvent(eventType: string): string {
   return eventType.replace(/_/g, " ");
 }
+
+export function artifactProxyPath(claimId: string, artifactId: number): string {
+  return `/api/claims/${claimId}/artifacts/${artifactId}`;
+}

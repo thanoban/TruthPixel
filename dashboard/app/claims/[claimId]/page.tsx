@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { API_URL, fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
+import { fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
 import type { AuditEvent, ClaimArtifact, ReviewDecisionValue, StoredClaim } from "../../types";
 import {
   LAYER_LABELS,
+  artifactProxyPath,
   formatPercent,
   formatTimestamp,
   humanizeEvent,
@@ -168,13 +169,13 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               {originalArtifact ? (
                 <div className="overlay-stage">
                   <img
-                    src={`${API_URL}${originalArtifact.download_path}`}
+                    src={artifactProxyPath(originalArtifact.claim_id, originalArtifact.id)}
                     alt="Original claim upload"
                     className="stage-image"
                   />
                   {heatmapArtifact && (
                     <img
-                      src={`${API_URL}${heatmapArtifact.download_path}`}
+                      src={artifactProxyPath(heatmapArtifact.claim_id, heatmapArtifact.id)}
                       alt="Heatmap overlay"
                       className="stage-image overlay-image"
                       style={{ opacity: overlayOpacity / 100 }}
@@ -188,7 +189,7 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
                 {claim.artifacts.map((artifact) => (
                   <a
                     key={artifact.id}
-                    href={`${API_URL}${artifact.download_path}`}
+                    href={artifactProxyPath(artifact.claim_id, artifact.id)}
                     className="artifact-chip"
                     target="_blank"
                     rel="noreferrer"

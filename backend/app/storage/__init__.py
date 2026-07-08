@@ -1,5 +1,6 @@
 from .repository import (
     add_artifact,
+    create_processing_claim,
     create_pending_claim,
     create_or_update_claim,
     create_api_key,
@@ -26,6 +27,7 @@ from .repository import (
 
 __all__ = [
     "add_artifact",
+    "create_processing_claim",
     "create_pending_claim",
     "create_or_update_claim",
     "create_api_key",
