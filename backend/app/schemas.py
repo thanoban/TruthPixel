@@ -52,6 +52,11 @@ class ClaimContext(BaseModel):
     listing_image_urls: list[str] = Field(default_factory=list)
 
 
+class ArtifactKind(str, Enum):
+    ORIGINAL_UPLOAD = "original_upload"
+    HEATMAP = "heatmap"
+
+
 class ReviewDecision(str, Enum):
     APPROVE = "approve"
     REJECT = "reject"
@@ -79,6 +84,19 @@ class AuditEvent(BaseModel):
     created_at: datetime
 
 
+class ClaimArtifact(BaseModel):
+    id: int
+    claim_id: str
+    kind: ArtifactKind
+    filename: str
+    media_type: str
+    byte_size: int = Field(ge=0)
+    sha256: str
+    storage_backend: str
+    download_path: str
+    created_at: datetime
+
+
 class ClaimReport(BaseModel):
     claim_id: str
     context: ClaimContext
@@ -95,6 +113,7 @@ class StoredClaim(ClaimReport):
     created_at: datetime
     updated_at: datetime
     decision: ClaimDecision | None = None
+    artifacts: list[ClaimArtifact] = Field(default_factory=list)
 
 
 class ClaimListItem(BaseModel):
@@ -105,3 +124,4 @@ class ClaimListItem(BaseModel):
     fusion: FusionResult
     decision: ClaimDecision | None = None
     signal_count: int = Field(ge=0)
+    artifact_count: int = Field(ge=0)

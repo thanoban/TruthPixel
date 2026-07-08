@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,6 +10,13 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
     database_url: str = "sqlite:///./truthpixel.db"
+    storage_backend: str = "local"
+    local_artifact_dir: str = "./artifact_storage"
+    s3_endpoint: str = ""
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_bucket: str = "truthpixel-images"
+    s3_region: str = "us-east-1"
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers.
@@ -17,6 +25,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
+    @property
+    def artifact_dir(self) -> Path:
+        return Path(self.local_artifact_dir).expanduser().resolve()
 
     # Vertex AI / agents
     google_cloud_project: str = ""

@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
 from ..schemas import (
+    ArtifactKind,
     AuditEvent,
+    ClaimArtifact,
     ClaimDecision,
     ClaimDecisionRequest,
     ClaimListItem,
@@ -16,7 +18,7 @@ from ..schemas import (
     ClaimContext,
     StoredClaim,
 )
-from .models import AuditEventRecord, Base, ClaimRecord, utc_now
+from .models import ArtifactRecord, AuditEventRecord, Base, ClaimRecord, utc_now
 
 
 def _engine_kwargs(database_url: str) -> dict:
@@ -77,6 +79,22 @@ def _claim_to_schema(record: ClaimRecord) -> StoredClaim:
         report_text=record.report_text,
         disclaimer=record.disclaimer,
         decision=decision,
+        artifacts=[_artifact_to_schema(item) for item in sorted(record.artifacts, key=lambda a: a.id)],
+    )
+
+
+def _artifact_to_schema(record: ArtifactRecord) -> ClaimArtifact:
+    return ClaimArtifact(
+        id=record.id,
+        claim_id=record.claim_id,
+        kind=record.kind,
+        filename=record.filename,
+        media_type=record.media_type,
+        byte_size=record.byte_size,
+        sha256=record.sha256,
+        storage_backend=record.storage_backend,
+        download_path=f"/v1/claims/{record.claim_id}/artifacts/{record.id}",
+        created_at=record.created_at,
     )
 
 
@@ -156,6 +174,7 @@ def list_claims(
                     fusion=record.fusion_json,
                     decision=decision,
                     signal_count=len(record.signals_json),
+                    artifact_count=len(record.artifacts),
                 )
             )
         return items[:limit]
@@ -207,3 +226,72 @@ def get_claim_audit_events(claim_id: str) -> list[AuditEvent]:
             )
             for record in records
         ]
+
+
+def add_artifact(
+    *,
+    claim_id: str,
+    kind: ArtifactKind,
+    filename: str,
+    media_type: str,
+    byte_size: int,
+    sha256: str,
+    storage_backend: str,
+    storage_key: str,
+) -> ClaimArtifact | None:
+    with session_scope() as session:
+        claim = session.get(ClaimRecord, claim_id)
+        if claim is None:
+            return None
+        record = ArtifactRecord(
+            claim_id=claim_id,
+            kind=kind.value,
+            filename=filename,
+            media_type=media_type,
+            byte_size=byte_size,
+            sha256=sha256,
+            storage_backend=storage_backend,
+            storage_key=storage_key,
+        )
+        session.add(record)
+        session.flush()
+        _append_audit_event(
+            session,
+            claim_id,
+            "artifact_stored",
+            {
+                "artifact_id": record.id,
+                "kind": kind.value,
+                "storage_backend": storage_backend,
+                "byte_size": byte_size,
+            },
+        )
+        session.flush()
+        session.refresh(record)
+        return _artifact_to_schema(record)
+
+
+def list_claim_artifacts(claim_id: str) -> list[ClaimArtifact] | None:
+    with session_scope() as session:
+        claim = session.get(ClaimRecord, claim_id)
+        if claim is None:
+            return None
+        stmt = (
+            select(ArtifactRecord)
+            .where(ArtifactRecord.claim_id == claim_id)
+            .order_by(ArtifactRecord.created_at.asc(), ArtifactRecord.id.asc())
+        )
+        records = session.execute(stmt).scalars().all()
+        return [_artifact_to_schema(record) for record in records]
+
+
+def get_artifact_record(claim_id: str, artifact_id: int) -> ArtifactRecord | None:
+    with session_scope() as session:
+        stmt = select(ArtifactRecord).where(
+            ArtifactRecord.claim_id == claim_id, ArtifactRecord.id == artifact_id
+        )
+        record = session.execute(stmt).scalar_one_or_none()
+        if record is None:
+            return None
+        session.expunge(record)
+        return record

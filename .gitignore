@@ -39,6 +39,9 @@ npm-debug.log*
 minio-data/
 pgdata/
 qdrant-storage/
+artifact_storage/
+truthpixel.db
+*.db
 
 # OS / editors
 .DS_Store

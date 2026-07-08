@@ -1,13 +1,16 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from .artifacts import get_artifact_store
 from .config import get_settings
 from .graph import run_claim
 from .schemas import (
+    ArtifactKind,
     AuditEvent,
+    ClaimArtifact,
     ClaimContext,
     ClaimDecisionRequest,
     ClaimListItem,
@@ -15,10 +18,13 @@ from .schemas import (
     StoredClaim,
 )
 from .storage import (
+    add_artifact,
     create_or_update_claim,
+    get_artifact_record,
     get_claim,
     get_claim_audit_events,
     init_db,
+    list_claim_artifacts,
     list_claims,
     record_decision,
 )
@@ -83,7 +89,28 @@ async def analyze_claim(
         listing_image_urls=[u.strip() for u in listing_image_urls.split(",") if u.strip()],
     )
     report = await run_claim(data, context)
-    return create_or_update_claim(report)
+    create_or_update_claim(report)
+    stored = get_artifact_store().put_bytes(
+        claim_id=report.claim_id,
+        kind=ArtifactKind.ORIGINAL_UPLOAD.value,
+        data=data,
+        filename=image.filename or "claim-upload",
+        media_type=image.content_type or "application/octet-stream",
+    )
+    add_artifact(
+        claim_id=report.claim_id,
+        kind=ArtifactKind.ORIGINAL_UPLOAD,
+        filename=stored.filename,
+        media_type=stored.media_type,
+        byte_size=stored.byte_size,
+        sha256=stored.sha256,
+        storage_backend=stored.storage_backend,
+        storage_key=stored.storage_key,
+    )
+    claim = get_claim(report.claim_id)
+    if claim is None:
+        raise HTTPException(500, "claim was analyzed but could not be loaded after persistence")
+    return claim
 
 
 @app.get("/v1/claims", response_model=list[ClaimListItem])
@@ -117,3 +144,56 @@ async def get_claim_audit(claim_id: str) -> list[AuditEvent]:
     if claim is None:
         raise HTTPException(404, "claim not found")
     return get_claim_audit_events(claim_id)
+
+
+@app.get("/v1/claims/{claim_id}/artifacts", response_model=list[ClaimArtifact])
+async def get_claim_artifacts(claim_id: str) -> list[ClaimArtifact]:
+    artifacts = list_claim_artifacts(claim_id)
+    if artifacts is None:
+        raise HTTPException(404, "claim not found")
+    return artifacts
+
+
+@app.get("/v1/claims/{claim_id}/artifacts/{artifact_id}")
+async def download_claim_artifact(claim_id: str, artifact_id: int) -> Response:
+    artifact = get_artifact_record(claim_id, artifact_id)
+    if artifact is None:
+        raise HTTPException(404, "artifact not found")
+    data = get_artifact_store().get_bytes(artifact.storage_key)
+    headers = {"Content-Disposition": f'inline; filename="{artifact.filename}"'}
+    return Response(content=data, media_type=artifact.media_type, headers=headers)
+
+
+@app.post("/v1/claims/{claim_id}/artifacts/heatmap", response_model=ClaimArtifact)
+async def upload_claim_heatmap(
+    claim_id: str,
+    heatmap: UploadFile = File(...),
+) -> ClaimArtifact:
+    claim = get_claim(claim_id)
+    if claim is None:
+        raise HTTPException(404, "claim not found")
+    if heatmap.content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(415, f"unsupported heatmap content type: {heatmap.content_type}")
+    data = await heatmap.read()
+    if not data:
+        raise HTTPException(400, "empty heatmap upload")
+    stored = get_artifact_store().put_bytes(
+        claim_id=claim_id,
+        kind=ArtifactKind.HEATMAP.value,
+        data=data,
+        filename=heatmap.filename or "heatmap",
+        media_type=heatmap.content_type or "application/octet-stream",
+    )
+    artifact = add_artifact(
+        claim_id=claim_id,
+        kind=ArtifactKind.HEATMAP,
+        filename=stored.filename,
+        media_type=stored.media_type,
+        byte_size=stored.byte_size,
+        sha256=stored.sha256,
+        storage_backend=stored.storage_backend,
+        storage_key=stored.storage_key,
+    )
+    if artifact is None:
+        raise HTTPException(404, "claim not found")
+    return artifact
