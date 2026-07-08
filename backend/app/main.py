@@ -19,6 +19,7 @@ from .auth import (
 from .config import get_settings
 from .graph import run_claim
 from .jobs import enqueue_claim_processing
+from .signal_artifacts import persist_signal_artifacts
 from .schemas import (
     ArtifactKind,
     ApiKeyCreateRequest,
@@ -36,6 +37,7 @@ from .schemas import (
 )
 from .storage import (
     add_artifact,
+    create_processing_claim,
     create_api_key,
     create_pending_claim,
     create_tenant,
@@ -47,6 +49,7 @@ from .storage import (
     init_db,
     list_claim_artifacts,
     list_claims,
+    mark_claim_failed,
     record_decision,
     set_claim_task_info,
 )
@@ -99,7 +102,7 @@ async def analyze_claim(
     product_sku: str = Form(""),
     claim_reason: str = Form(""),
     listing_image_urls: str = Form(""),  # comma-separated
-) -> ClaimReport:
+) -> StoredClaim:
     if image.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(415, f"unsupported content type: {image.content_type}")
     data = await image.read()
@@ -114,17 +117,17 @@ async def analyze_claim(
         claim_reason=claim_reason,
         listing_image_urls=[u.strip() for u in listing_image_urls.split(",") if u.strip()],
     )
-    report = await run_claim(data, context)
-    create_or_update_claim(report, tenant_id=auth.tenant_id)
+    claim_id = str(uuid4())
+    create_processing_claim(claim_id, context, tenant_id=auth.tenant_id)
     stored = get_artifact_store().put_bytes(
-        claim_id=report.claim_id,
+        claim_id=claim_id,
         kind=ArtifactKind.ORIGINAL_UPLOAD.value,
         data=data,
         filename=image.filename or "claim-upload",
         media_type=image.content_type or "application/octet-stream",
     )
     add_artifact(
-        claim_id=report.claim_id,
+        claim_id=claim_id,
         kind=ArtifactKind.ORIGINAL_UPLOAD,
         filename=stored.filename,
         media_type=stored.media_type,
@@ -134,7 +137,15 @@ async def analyze_claim(
         storage_key=stored.storage_key,
         tenant_id=auth.tenant_id,
     )
-    claim = get_claim(report.claim_id, tenant_id=auth.tenant_id)
+    try:
+        report = await run_claim(data, context, claim_id=claim_id)
+        persist_signal_artifacts(claim_id, report.signals, tenant_id=auth.tenant_id)
+        create_or_update_claim(report, tenant_id=auth.tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        mark_claim_failed(claim_id, f"{type(exc).__name__}: {exc}")
+        raise
+
+    claim = get_claim(claim_id, tenant_id=auth.tenant_id)
     if claim is None:
         raise HTTPException(500, "claim was analyzed but could not be loaded after persistence")
     return claim

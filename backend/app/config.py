@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     listing_fetch_timeout_seconds: float = 8.0
     listing_max_images: int = 5
     l5_recent_claim_window: int = 40
+    l1_model_path: str = ""
+    l1_model_device: str = "auto"
+    l2_trufor_repo_dir: str = ""
+    l2_trufor_model_file: str = ""
+    l2_trufor_python_executable: str = ""
+    l2_trufor_device: str = "-1"
+    l2_trufor_experiment: str = "trufor_ph3"
+    l2_trufor_timeout_seconds: float = 180.0
     api_auth_enabled: bool = False
     admin_api_token: str = ""
     default_tenant_rate_limit_requests: int = 120
@@ -70,6 +78,10 @@ class Settings(BaseSettings):
     @property
     def vertex_configured(self) -> bool:
         return bool(self.google_cloud_project)
+
+    @property
+    def l2_trufor_configured(self) -> bool:
+        return bool(self.l2_trufor_repo_dir and self.l2_trufor_model_file)
 
 
 @lru_cache
