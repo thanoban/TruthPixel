@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ClaimReport } from "./types";
+import type { StoredClaim } from "./types";
 import { LAYER_LABELS } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -10,7 +10,7 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<ClaimReport | null>(null);
+  const [report, setReport] = useState<StoredClaim | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function onFileChange(f: File | null) {
@@ -70,7 +70,22 @@ export default function Home() {
             <div className="risk-label">
               fraud/manipulation risk {report.fusion.needs_review ? "— flagged for review" : ""}
             </div>
+            <div className="status-badge">
+              status: {report.status}
+              {report.decision && ` — reviewer decision: ${report.decision.decision}`}
+            </div>
           </div>
+
+          {report.artifacts
+            .filter((a) => a.kind === "heatmap")
+            .map((a) => (
+              <img
+                key={a.id}
+                src={`${API_URL}${a.download_path}`}
+                alt="manipulation heatmap overlay"
+                className="heatmap"
+              />
+            ))}
 
           <p className="report-text">{report.report_text}</p>
 

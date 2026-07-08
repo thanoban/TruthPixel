@@ -2,7 +2,8 @@
 
 > What we train, what we don't, and how we prove it honestly.
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
-> [COMPETITORS.md](COMPETITORS.md) · [AGENTS.md](AGENTS.md) · [ROADMAP.md](ROADMAP.md)
+> [COMPETITORS.md](COMPETITORS.md) · [AGENTS.md](AGENTS.md) · [ROADMAP.md](ROADMAP.md) ·
+> [COLAB_TRAINING.md](COLAB_TRAINING.md) (no local GPU — train T1 on Colab, data lives in Drive)
 
 ## 0. Scope discipline
 
@@ -16,7 +17,20 @@ We train exactly **three things**, in this order:
 
 Everything else is pretrained inference (TruFor, DINOv2) or third-party (Sightengine, c2patool).
 
+**Day-one L1 without training anything:** before T1 is trained, L1 already runs as an
+**ensemble of pretrained HF-Inference-API detectors** (`backend/app/hf_inference.py`) — zero
+training, zero GPU hosting. T1 (our own screenshot-augmented head) is the *upgrade* that later
+takes precedence or joins the ensemble as another member, not a prerequisite for a working,
+reasonably accurate L1. See [ARCHITECTURE.md](ARCHITECTURE.md) §3a. So "train three things" is
+about the moat, not about getting to a first working detector.
+
 ## 1. T1 — Layer-1 AI-generation detector
+
+**Before T1 exists — the HF ensemble (shipped):** `HF_API_TOKEN` + `L1_HF_MODELS` makes L1 call
+pretrained detectors via HF Inference API and average them (Apache-2.0 defaults: Ateeqq SigLIP
++ Nahrawy Swin). This is the day-one detector. T1 below is the accuracy upgrade — a head tuned
+for *our* domain (product photos) and *our* threat model (screenshot survival), which generic
+pretrained detectors are not trained for.
 
 **Recipe (UniversalFakeDetect approach):**
 1. Frozen CLIP ViT-L/14 image encoder → 768-d features.
@@ -94,6 +108,12 @@ not regress the robustness matrix by >1pt anywhere. Versions logged in the model
 
 ## 5. Repository layout for ML work
 
+`ml/layer1_aigen/`, `ml/fusion/`, and `ml/tests/` exist today. `layer1_aigen/` already has the
+working `dataset.py`, `augment.py`, `model.py`, `train.py`, `eval.py` scaffold (see
+[COLAB_TRAINING.md](COLAB_TRAINING.md) for how to run it without a local GPU), and `fusion/`
+already contains feature assembly plus training/export helpers. `ml/recapture/` and
+`ml/datagen/` below are still target layout, not yet created.
+
 ```
 ml/
   layer1_aigen/
@@ -113,8 +133,13 @@ ml/
 
 ## 6. Compute & hosting
 
-- **Training:** local GPU first (user preference); Colab/Kaggle free tiers fit T1 easily;
-  Vertex AI credits are a fallback for bigger sweeps.
+- **Training:** no local GPU available — train on Colab's free T4 tier (see
+  [COLAB_TRAINING.md](COLAB_TRAINING.md); data/checkpoints live in Google Drive, $0 cost).
+  **Do not plan on GCP/Vertex credits for training compute** — the available $1,000 credit is
+  scoped to GenAI App Builder (Vertex AI Search/Conversation/Agent Builder) and does **not**
+  cover Colab Enterprise GPU or general Vertex training compute; confirmed by checking the
+  credit's Billing → Credits scope. If training volume ever outgrows free Colab, evaluate a
+  paid GPU option on its own merits rather than assuming this credit applies.
 - **Inference:** local during dev → Modal/RunPod serverless scale-to-zero in Phase 1
   (claims are async & bursty; an always-on GPU box is wasted money).
 - **Caching:** CLIP/DINOv2 embeddings computed once per image, reused by L1 and L5.
