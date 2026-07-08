@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # 3rd-party (optional)
     sightengine_api_user: str = ""
     sightengine_api_secret: str = ""
+    sightengine_timeout_seconds: float = 15.0
     c2patool_path: str = "c2patool"
     c2patool_timeout_seconds: float = 8.0
     c2patool_trust_anchors: str = ""
