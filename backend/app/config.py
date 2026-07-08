@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     l5_recent_claim_window: int = 40
     l1_model_path: str = ""
     l1_model_device: str = "auto"
+    api_auth_enabled: bool = False
+    admin_api_token: str = ""
+    default_tenant_rate_limit_requests: int = 120
+    default_tenant_rate_limit_window_seconds: int = 60
+    public_submission_enabled: bool = False
+    public_rate_limit_requests: int = 5
+    public_rate_limit_window_seconds: int = 3600
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers.
