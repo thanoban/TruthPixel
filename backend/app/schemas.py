@@ -106,6 +106,7 @@ class ClaimArtifact(BaseModel):
 
 class ClaimQueueStatus(BaseModel):
     claim_id: str
+    tenant_id: str | None = None
     status: ClaimStatus
     task_id: str | None = None
     error_message: str | None = None
@@ -130,6 +131,7 @@ class ClaimReport(BaseModel):
 
 
 class StoredClaim(ClaimReport):
+    tenant_id: str | None = None
     created_at: datetime
     updated_at: datetime
     status: ClaimStatus = ClaimStatus.COMPLETED
@@ -144,6 +146,7 @@ class StoredClaim(ClaimReport):
 
 class ClaimListItem(BaseModel):
     claim_id: str
+    tenant_id: str | None = None
     created_at: datetime
     updated_at: datetime
     status: ClaimStatus
@@ -154,3 +157,36 @@ class ClaimListItem(BaseModel):
     decision: ClaimDecision | None = None
     signal_count: int = Field(ge=0)
     artifact_count: int = Field(ge=0)
+
+
+class TenantCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    slug: str | None = Field(default=None, min_length=3, max_length=80)
+    rate_limit_requests: int | None = Field(default=None, ge=1, le=100000)
+    rate_limit_window_seconds: int | None = Field(default=None, ge=1, le=86400)
+
+
+class TenantResponse(BaseModel):
+    tenant_id: str
+    name: str
+    is_active: bool
+    rate_limit_requests: int
+    rate_limit_window_seconds: int
+    created_at: datetime
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    rate_limit_requests: int | None = Field(default=None, ge=1, le=100000)
+    rate_limit_window_seconds: int | None = Field(default=None, ge=1, le=86400)
+
+
+class IssuedApiKeyResponse(BaseModel):
+    api_key_id: int
+    tenant_id: str
+    name: str
+    key_prefix: str
+    api_key: str
+    rate_limit_requests: int
+    rate_limit_window_seconds: int
+    created_at: datetime
