@@ -93,9 +93,9 @@ python -m layer1_aigen.train --data-root path/to/dataset
 ## Status
 
 Phase 0 scaffold with working backend modules beyond the analyzer stubs: claims are now
-persisted with review decisions and audit events, and the `L1` training scaffold lives in
-`ml/layer1_aigen/`. Real model inference still plugs in behind the same interfaces in
-`backend/app/analyzers/`.
+persisted with review decisions, audit events, and stored artifacts (original uploads plus
+heatmaps). The `L1` training scaffold lives in `ml/layer1_aigen/`. Real model inference
+still plugs in behind the same interfaces in `backend/app/analyzers/`.
 
 ## License
 

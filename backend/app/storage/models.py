@@ -33,6 +33,9 @@ class ClaimRecord(Base):
     audit_events: Mapped[list["AuditEventRecord"]] = relationship(
         back_populates="claim", cascade="all, delete-orphan"
     )
+    artifacts: Mapped[list["ArtifactRecord"]] = relationship(
+        back_populates="claim", cascade="all, delete-orphan"
+    )
 
 
 class AuditEventRecord(Base):
@@ -45,3 +48,20 @@ class AuditEventRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     claim: Mapped[ClaimRecord] = relationship(back_populates="audit_events")
+
+
+class ArtifactRecord(Base):
+    __tablename__ = "claim_artifacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    claim_id: Mapped[str] = mapped_column(ForeignKey("claims.claim_id"), index=True)
+    kind: Mapped[str] = mapped_column(String(50), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(120))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_backend: Mapped[str] = mapped_column(String(30))
+    storage_key: Mapped[str] = mapped_column(String(500), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    claim: Mapped[ClaimRecord] = relationship(back_populates="artifacts")
