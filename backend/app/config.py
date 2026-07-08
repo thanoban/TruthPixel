@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     listing_fetch_timeout_seconds: float = 8.0
     listing_max_images: int = 5
     l5_recent_claim_window: int = 40
+    l1_model_path: str = ""
+    l1_model_device: str = "auto"
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers.
