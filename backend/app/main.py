@@ -1,17 +1,20 @@
 import logging
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .artifacts import get_artifact_store
 from .config import get_settings
 from .graph import run_claim
+from .jobs import enqueue_claim_processing
 from .schemas import (
     ArtifactKind,
     AuditEvent,
     ClaimArtifact,
     ClaimContext,
+    ClaimQueueStatus,
     ClaimDecisionRequest,
     ClaimListItem,
     ClaimReport,
@@ -19,14 +22,17 @@ from .schemas import (
 )
 from .storage import (
     add_artifact,
+    create_pending_claim,
     create_or_update_claim,
     get_artifact_record,
     get_claim,
     get_claim_audit_events,
+    get_claim_queue_status,
     init_db,
     list_claim_artifacts,
     list_claims,
     record_decision,
+    set_claim_task_info,
 )
 
 logging.basicConfig(level=get_settings().log_level)
@@ -63,6 +69,7 @@ async def health() -> dict:
         "status": "ok",
         "vertex_agents": "configured" if settings.vertex_configured else "stub",
         "storage": "configured" if settings.database_url else "disabled",
+        "queue": "eager" if settings.celery_task_always_eager else "worker",
     }
 
 
@@ -113,6 +120,55 @@ async def analyze_claim(
     return claim
 
 
+@app.post("/v1/claims/async", response_model=ClaimQueueStatus, status_code=status.HTTP_202_ACCEPTED)
+async def queue_claim_analysis(
+    image: UploadFile = File(...),
+    order_id: str = Form(""),
+    product_sku: str = Form(""),
+    claim_reason: str = Form(""),
+    listing_image_urls: str = Form(""),
+    webhook_url: str = Form(""),
+) -> ClaimQueueStatus:
+    if image.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(415, f"unsupported content type: {image.content_type}")
+    data = await image.read()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "image exceeds 15 MB limit")
+    if not data:
+        raise HTTPException(400, "empty image upload")
+
+    claim_id = str(uuid4())
+    context = ClaimContext(
+        order_id=order_id,
+        product_sku=product_sku,
+        claim_reason=claim_reason,
+        listing_image_urls=[u.strip() for u in listing_image_urls.split(",") if u.strip()],
+    )
+    create_pending_claim(claim_id, context, webhook_url=webhook_url)
+    stored = get_artifact_store().put_bytes(
+        claim_id=claim_id,
+        kind=ArtifactKind.ORIGINAL_UPLOAD.value,
+        data=data,
+        filename=image.filename or "claim-upload",
+        media_type=image.content_type or "application/octet-stream",
+    )
+    add_artifact(
+        claim_id=claim_id,
+        kind=ArtifactKind.ORIGINAL_UPLOAD,
+        filename=stored.filename,
+        media_type=stored.media_type,
+        byte_size=stored.byte_size,
+        sha256=stored.sha256,
+        storage_backend=stored.storage_backend,
+        storage_key=stored.storage_key,
+    )
+    task_id = enqueue_claim_processing(claim_id)
+    queue_status = set_claim_task_info(claim_id, task_id)
+    if queue_status is None:
+        raise HTTPException(500, "claim was queued but task metadata could not be stored")
+    return queue_status
+
+
 @app.get("/v1/claims", response_model=list[ClaimListItem])
 async def list_claim_reports(
     limit: int = Query(default=20, ge=1, le=100),
@@ -125,6 +181,14 @@ async def list_claim_reports(
 @app.get("/v1/claims/{claim_id}", response_model=StoredClaim)
 async def get_claim_report(claim_id: str) -> StoredClaim:
     claim = get_claim(claim_id)
+    if claim is None:
+        raise HTTPException(404, "claim not found")
+    return claim
+
+
+@app.get("/v1/claims/{claim_id}/status", response_model=ClaimQueueStatus)
+async def get_claim_status(claim_id: str) -> ClaimQueueStatus:
+    claim = get_claim_queue_status(claim_id)
     if claim is None:
         raise HTTPException(404, "claim not found")
     return claim

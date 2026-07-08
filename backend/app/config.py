@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
     database_url: str = "sqlite:///./truthpixel.db"
+    redis_url: str = "redis://localhost:6379/0"
     storage_backend: str = "local"
     local_artifact_dir: str = "./artifact_storage"
     s3_endpoint: str = ""
@@ -17,6 +18,9 @@ class Settings(BaseSettings):
     s3_secret_key: str = ""
     s3_bucket: str = "truthpixel-images"
     s3_region: str = "us-east-1"
+    celery_result_backend: str = ""
+    celery_task_always_eager: bool = False
+    webhook_timeout_seconds: float = 10.0
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers.

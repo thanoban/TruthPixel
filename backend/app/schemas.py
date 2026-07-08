@@ -57,6 +57,13 @@ class ArtifactKind(str, Enum):
     HEATMAP = "heatmap"
 
 
+class ClaimStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ReviewDecision(str, Enum):
     APPROVE = "approve"
     REJECT = "reject"
@@ -97,6 +104,19 @@ class ClaimArtifact(BaseModel):
     created_at: datetime
 
 
+class ClaimQueueStatus(BaseModel):
+    claim_id: str
+    status: ClaimStatus
+    task_id: str | None = None
+    error_message: str | None = None
+    webhook_url: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    poll_path: str
+
+
 class ClaimReport(BaseModel):
     claim_id: str
     context: ClaimContext
@@ -112,6 +132,12 @@ class ClaimReport(BaseModel):
 class StoredClaim(ClaimReport):
     created_at: datetime
     updated_at: datetime
+    status: ClaimStatus = ClaimStatus.COMPLETED
+    task_id: str | None = None
+    error_message: str | None = None
+    webhook_url: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     decision: ClaimDecision | None = None
     artifacts: list[ClaimArtifact] = Field(default_factory=list)
 
@@ -120,6 +146,9 @@ class ClaimListItem(BaseModel):
     claim_id: str
     created_at: datetime
     updated_at: datetime
+    status: ClaimStatus
+    task_id: str | None = None
+    error_message: str | None = None
     context: ClaimContext
     fusion: FusionResult
     decision: ClaimDecision | None = None

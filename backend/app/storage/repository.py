@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime
 from functools import lru_cache
 
 from sqlalchemy import create_engine, select
@@ -15,7 +16,10 @@ from ..schemas import (
     ClaimDecisionRequest,
     ClaimListItem,
     ClaimReport,
+    ClaimQueueStatus,
     ClaimContext,
+    ClaimStatus,
+    FusionResult,
     StoredClaim,
 )
 from .models import ArtifactRecord, AuditEventRecord, Base, ClaimRecord, utc_now
@@ -72,6 +76,12 @@ def _claim_to_schema(record: ClaimRecord) -> StoredClaim:
         claim_id=record.claim_id,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        status=record.status,
+        task_id=record.task_id,
+        error_message=record.error_message,
+        webhook_url=record.webhook_url,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
         context=ClaimContext.model_validate(record.context_json),
         signals=record.signals_json,
         agent_findings=record.agent_findings_json,
@@ -98,6 +108,30 @@ def _artifact_to_schema(record: ArtifactRecord) -> ClaimArtifact:
     )
 
 
+def _placeholder_fusion() -> dict:
+    return FusionResult(
+        risk_score=0.5,
+        needs_review=True,
+        contributions={},
+        fusion_version="queued-0.1",
+    ).model_dump(mode="json")
+
+
+def _queue_status(record: ClaimRecord) -> ClaimQueueStatus:
+    return ClaimQueueStatus(
+        claim_id=record.claim_id,
+        status=record.status,
+        task_id=record.task_id,
+        error_message=record.error_message,
+        webhook_url=record.webhook_url,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        poll_path=f"/v1/claims/{record.claim_id}/status",
+    )
+
+
 def _append_audit_event(session: Session, claim_id: str, event_type: str, payload: dict) -> None:
     session.add(
         AuditEventRecord(
@@ -106,6 +140,64 @@ def _append_audit_event(session: Session, claim_id: str, event_type: str, payloa
             payload_json=payload,
         )
     )
+
+
+def create_pending_claim(claim_id: str, context: ClaimContext, webhook_url: str = "") -> StoredClaim:
+    with session_scope() as session:
+        record = session.get(ClaimRecord, claim_id)
+        if record is None:
+            record = ClaimRecord(claim_id=claim_id)
+            session.add(record)
+        record.context_json = context.model_dump(mode="json")
+        record.signals_json = []
+        record.agent_findings_json = []
+        record.fusion_json = _placeholder_fusion()
+        record.report_text = "Queued for asynchronous analysis."
+        record.disclaimer = (
+            "Confidence-scored assessment, not a verdict. A human reviewer makes the final call."
+        )
+        record.status = ClaimStatus.PENDING.value
+        record.error_message = None
+        record.webhook_url = webhook_url or None
+        record.started_at = None
+        record.completed_at = None
+        session.flush()
+        _append_audit_event(
+            session,
+            claim_id,
+            "claim_queued",
+            {"webhook_url": webhook_url or None},
+        )
+        session.flush()
+        session.refresh(record)
+        return _claim_to_schema(record)
+
+
+def set_claim_task_info(claim_id: str, task_id: str | None) -> ClaimQueueStatus | None:
+    with session_scope() as session:
+        record = session.get(ClaimRecord, claim_id)
+        if record is None:
+            return None
+        record.task_id = task_id
+        session.flush()
+        session.refresh(record)
+        return _queue_status(record)
+
+
+def mark_claim_processing(claim_id: str) -> ClaimQueueStatus | None:
+    with session_scope() as session:
+        record = session.get(ClaimRecord, claim_id)
+        if record is None:
+            return None
+        record.status = ClaimStatus.PROCESSING.value
+        record.error_message = None
+        if record.started_at is None:
+            record.started_at = utc_now()
+        session.flush()
+        _append_audit_event(session, claim_id, "claim_processing_started", {})
+        session.flush()
+        session.refresh(record)
+        return _queue_status(record)
 
 
 def create_or_update_claim(report: ClaimReport) -> StoredClaim:
@@ -123,6 +215,11 @@ def create_or_update_claim(report: ClaimReport) -> StoredClaim:
         record.fusion_json = report.fusion.model_dump(mode="json")
         record.report_text = report.report_text
         record.disclaimer = report.disclaimer
+        record.status = ClaimStatus.COMPLETED.value
+        record.error_message = None
+        if record.started_at is None:
+            record.started_at = utc_now()
+        record.completed_at = utc_now()
         session.flush()
 
         _append_audit_event(
@@ -144,6 +241,12 @@ def get_claim(claim_id: str) -> StoredClaim | None:
     with session_scope() as session:
         record = session.get(ClaimRecord, claim_id)
         return _claim_to_schema(record) if record else None
+
+
+def get_claim_queue_status(claim_id: str) -> ClaimQueueStatus | None:
+    with session_scope() as session:
+        record = session.get(ClaimRecord, claim_id)
+        return _queue_status(record) if record else None
 
 
 def list_claims(
@@ -170,6 +273,9 @@ def list_claims(
                     claim_id=record.claim_id,
                     created_at=record.created_at,
                     updated_at=record.updated_at,
+                    status=record.status,
+                    task_id=record.task_id,
+                    error_message=record.error_message,
                     context=ClaimContext.model_validate(record.context_json),
                     fusion=record.fusion_json,
                     decision=decision,
@@ -206,6 +312,28 @@ def record_decision(claim_id: str, request: ClaimDecisionRequest) -> StoredClaim
         session.flush()
         session.refresh(record)
         return _claim_to_schema(record)
+
+
+def mark_claim_failed(claim_id: str, error_message: str) -> ClaimQueueStatus | None:
+    with session_scope() as session:
+        record = session.get(ClaimRecord, claim_id)
+        if record is None:
+            return None
+        record.status = ClaimStatus.FAILED.value
+        record.error_message = error_message
+        if record.started_at is None:
+            record.started_at = utc_now()
+        record.completed_at = utc_now()
+        session.flush()
+        _append_audit_event(
+            session,
+            claim_id,
+            "claim_processing_failed",
+            {"error_message": error_message},
+        )
+        session.flush()
+        session.refresh(record)
+        return _queue_status(record)
 
 
 def get_claim_audit_events(claim_id: str) -> list[AuditEvent]:
@@ -289,6 +417,23 @@ def get_artifact_record(claim_id: str, artifact_id: int) -> ArtifactRecord | Non
     with session_scope() as session:
         stmt = select(ArtifactRecord).where(
             ArtifactRecord.claim_id == claim_id, ArtifactRecord.id == artifact_id
+        )
+        record = session.execute(stmt).scalar_one_or_none()
+        if record is None:
+            return None
+        session.expunge(record)
+        return record
+
+
+def get_original_artifact_record(claim_id: str) -> ArtifactRecord | None:
+    with session_scope() as session:
+        stmt = (
+            select(ArtifactRecord)
+            .where(
+                ArtifactRecord.claim_id == claim_id,
+                ArtifactRecord.kind == ArtifactKind.ORIGINAL_UPLOAD.value,
+            )
+            .order_by(ArtifactRecord.created_at.asc(), ArtifactRecord.id.asc())
         )
         record = session.execute(stmt).scalar_one_or_none()
         if record is None:
