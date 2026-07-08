@@ -21,12 +21,12 @@ Scaffold (done / in progress):
 - [x] Smoke tests (graph end-to-end, error isolation, combo rule)
 
 Remaining:
-- [ ] Install deps, run test suite, fix anything red (paused at user request — docs first)
-- [ ] Git init, first commit, push to github.com/thanoban/TruthPixel (user-authored commits, no AI co-author)
+- [x] Install deps, run test suite, fix anything red
+- [x] Git init, first commit, push to github.com/thanoban/TruthPixel (user-authored commits, no AI co-author)
 - [ ] L1 real: train CLIP-head on GenImage subset with screenshot augmentation (`ml/layer1_aigen/`)
 - [ ] L2 real: TruFor pretrained inference + heatmap PNG output
-- [ ] L3 real: Sightengine recapture API call (keys already templated in `.env.example`)
-- [ ] L4: add c2patool subprocess check
+- [x] L3 real: Sightengine recapture API call (keys already templated in `.env.example`)
+- [x] L4: add c2patool subprocess check
 - [ ] Vertex agents live: set `GOOGLE_CLOUD_PROJECT`, verify semantic inspector on a garbled-text AI image
 - [x] Public webapp scaffold (`webapp/`): upload → fused report, thin client over `/v1/claims`
 - [ ] Backend CORS wired for webapp/dashboard origins (`app/config.py::cors_allow_origins`) — done in code, unverified
