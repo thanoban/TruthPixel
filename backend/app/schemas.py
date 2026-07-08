@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -51,6 +52,33 @@ class ClaimContext(BaseModel):
     listing_image_urls: list[str] = Field(default_factory=list)
 
 
+class ReviewDecision(str, Enum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    NEEDS_MORE_INFO = "needs_more_info"
+
+
+class ClaimDecision(BaseModel):
+    reviewer_id: str
+    decision: ReviewDecision
+    reason: str = ""
+    decided_at: datetime
+
+
+class ClaimDecisionRequest(BaseModel):
+    reviewer_id: str = Field(min_length=1, max_length=200)
+    decision: ReviewDecision
+    reason: str = Field(default="", max_length=5000)
+
+
+class AuditEvent(BaseModel):
+    id: int
+    claim_id: str
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
 class ClaimReport(BaseModel):
     claim_id: str
     context: ClaimContext
@@ -61,3 +89,19 @@ class ClaimReport(BaseModel):
     disclaimer: str = (
         "Confidence-scored assessment, not a verdict. A human reviewer makes the final call."
     )
+
+
+class StoredClaim(ClaimReport):
+    created_at: datetime
+    updated_at: datetime
+    decision: ClaimDecision | None = None
+
+
+class ClaimListItem(BaseModel):
+    claim_id: str
+    created_at: datetime
+    updated_at: datetime
+    context: ClaimContext
+    fusion: FusionResult
+    decision: ClaimDecision | None = None
+    signal_count: int = Field(ge=0)

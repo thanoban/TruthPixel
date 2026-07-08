@@ -92,9 +92,10 @@ python -m layer1_aigen.train --data-root path/to/dataset
 
 ## Status
 
-Phase 0 scaffold. Analyzers return structured **stub** signals so the whole pipeline runs
-end-to-end today; real models plug in behind the same interface (see `backend/app/analyzers/`).
-Layer 1 training scaffold lives in `ml/layer1_aigen/`.
+Phase 0 scaffold with working backend modules beyond the analyzer stubs: claims are now
+persisted with review decisions and audit events, and the `L1` training scaffold lives in
+`ml/layer1_aigen/`. Real model inference still plugs in behind the same interfaces in
+`backend/app/analyzers/`.
 
 ## License
 

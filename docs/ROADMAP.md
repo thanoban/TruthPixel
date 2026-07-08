@@ -41,7 +41,8 @@ Remaining:
 **Goal:** a platform could pilot it.
 
 - [ ] Async job queue (Celery + Redis), claim status polling / webhook callback
-- [ ] Persistence: Postgres (claims, signals, decisions, audit log), MinIO/S3 (images + heatmaps)
+- [x] Persistence foundation: database-backed claims, signals, reviewer decisions, and audit log
+- [ ] Object storage: MinIO/S3 (images + heatmaps)
 - [ ] L5 v1: DINOv2 embeddings + Qdrant; listing↔claim similarity; reverse-image search (TinEye/SerpAPI)
 - [ ] Public webapp: anonymous rate limiting (IP/fingerprint), image-retention policy stated on page, optional free API key for higher usage (see USE_CASES.md §3)
 - [ ] Learned fusion: LightGBM/LogReg + calibration + SHAP (labels from synthetic fraud pairs — `ml/datagen/`)
