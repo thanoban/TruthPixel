@@ -28,6 +28,12 @@ async def test_graph_runs_end_to_end_in_stub_mode():
 
 
 @pytest.mark.asyncio
+async def test_graph_respects_provided_claim_id():
+    report = await run_claim(make_jpeg(), ClaimContext(), claim_id="claim-fixed")
+    assert report.claim_id == "claim-fixed"
+
+
+@pytest.mark.asyncio
 async def test_analyzer_error_isolation():
     # A signal with an error must not break fusion.
     ok = SignalResult(layer=Layer.L1_AIGEN, score=0.8, confidence=0.9)

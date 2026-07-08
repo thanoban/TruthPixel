@@ -28,6 +28,12 @@ class ClaimRecord(Base):
     fusion_json: Mapped[dict] = mapped_column(JSON, default=dict)
     report_text: Mapped[str] = mapped_column(Text, default="")
     disclaimer: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(30), default="completed", index=True)
+    task_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    webhook_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     decision_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     audit_events: Mapped[list["AuditEventRecord"]] = relationship(

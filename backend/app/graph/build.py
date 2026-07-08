@@ -93,11 +93,11 @@ def build_graph():
 _graph = None
 
 
-async def run_claim(image: bytes, context: ClaimContext) -> ClaimReport:
+async def run_claim(image: bytes, context: ClaimContext, claim_id: str | None = None) -> ClaimReport:
     global _graph
     if _graph is None:
         _graph = build_graph()
-    claim_id = str(uuid.uuid4())
+    claim_id = claim_id or str(uuid.uuid4())
     final: ClaimState = await _graph.ainvoke(
         {"claim_id": claim_id, "image": image, "context": context}
     )
