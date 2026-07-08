@@ -440,3 +440,22 @@ def get_original_artifact_record(claim_id: str) -> ArtifactRecord | None:
             return None
         session.expunge(record)
         return record
+
+
+def get_recent_original_artifact_records(
+    *, exclude_claim_id: str, limit: int
+) -> list[ArtifactRecord]:
+    with session_scope() as session:
+        stmt = (
+            select(ArtifactRecord)
+            .where(
+                ArtifactRecord.claim_id != exclude_claim_id,
+                ArtifactRecord.kind == ArtifactKind.ORIGINAL_UPLOAD.value,
+            )
+            .order_by(ArtifactRecord.created_at.desc(), ArtifactRecord.id.desc())
+            .limit(limit)
+        )
+        records = session.execute(stmt).scalars().all()
+        for record in records:
+            session.expunge(record)
+        return records

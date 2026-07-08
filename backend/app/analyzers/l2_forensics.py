@@ -14,7 +14,7 @@ class ForensicsAnalyzer(Analyzer):
 
     layer = Layer.L2_FORENSICS
 
-    async def _run(self, image: bytes, context: ClaimContext) -> SignalResult:
+    async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         return SignalResult(
             layer=self.layer,
             score=0.5,

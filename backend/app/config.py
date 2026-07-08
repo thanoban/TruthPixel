@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     celery_result_backend: str = ""
     celery_task_always_eager: bool = False
     webhook_timeout_seconds: float = 10.0
+    listing_fetch_timeout_seconds: float = 8.0
+    listing_max_images: int = 5
+    l5_recent_claim_window: int = 40
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers.

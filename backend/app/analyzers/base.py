@@ -13,10 +13,10 @@ class Analyzer(ABC):
     layer: Layer
 
     @abstractmethod
-    async def _run(self, image: bytes, context: ClaimContext) -> SignalResult: ...
+    async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult: ...
 
-    async def analyze(self, image: bytes, context: ClaimContext) -> SignalResult:
+    async def analyze(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         try:
-            return await self._run(image, context)
+            return await self._run(image, context, claim_id)
         except Exception as exc:  # noqa: BLE001 — error isolation is the point
             return SignalResult(layer=self.layer, error=f"{type(exc).__name__}: {exc}")

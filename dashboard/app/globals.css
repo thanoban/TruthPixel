@@ -1,0 +1,439 @@
+:root {
+  --bg: #f2efe6;
+  --panel: rgba(255, 252, 246, 0.9);
+  --panel-strong: #fffdf8;
+  --line: rgba(77, 60, 34, 0.14);
+  --text: #1f1a15;
+  --muted: #685a49;
+  --accent: #14532d;
+  --accent-soft: #e0f0d4;
+  --warn: #9a3412;
+  --warn-soft: #ffedd5;
+  --danger: #991b1b;
+  --danger-soft: #fee2e2;
+  --shadow: 0 18px 40px rgba(61, 48, 30, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(232, 205, 142, 0.22), transparent 30%),
+    radial-gradient(circle at top right, rgba(110, 165, 113, 0.18), transparent 26%),
+    linear-gradient(180deg, #f7f3ea 0%, #ece6d8 100%);
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.dashboard-shell,
+.detail-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 20px 56px;
+}
+
+.hero-card,
+.detail-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
+  gap: 20px;
+  padding: 28px;
+  background: linear-gradient(135deg, rgba(255, 252, 246, 0.96), rgba(238, 233, 220, 0.88));
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 12px;
+  font-family: "Segoe UI", sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+h1 {
+  font-size: clamp(2rem, 3vw, 3.5rem);
+  line-height: 0.98;
+  max-width: 12ch;
+}
+
+.hero-copy,
+.panel-header p,
+.claim-meta,
+.muted-copy,
+.report-copy,
+.toolbar-meta p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.hero-metrics,
+.detail-metrics {
+  display: grid;
+  gap: 14px;
+}
+
+.metric-card {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(50, 42, 29, 0.08);
+  border-radius: 20px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metric-card span,
+.label,
+.timestamp {
+  color: var(--muted);
+  font-size: 13px;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.metric-card strong {
+  font-size: 1.4rem;
+}
+
+.toolbar {
+  margin-top: 26px;
+  display: grid;
+  gap: 18px;
+}
+
+.tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tab,
+.secondary-button,
+button[type="submit"] {
+  border-radius: 999px;
+  border: 1px solid rgba(50, 42, 29, 0.15);
+  padding: 10px 16px;
+  background: rgba(255, 253, 248, 0.9);
+  color: var(--text);
+}
+
+.tab.active,
+button[type="submit"] {
+  background: var(--text);
+  color: #fff;
+}
+
+.toolbar-meta,
+.detail-header,
+.panel-header,
+.audit-meta,
+.agent-topline,
+.card-topline,
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.queue-grid,
+.detail-grid {
+  margin-top: 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.queue-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.claim-card,
+.panel,
+.empty-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+}
+
+.claim-card {
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+  transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.claim-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(20, 83, 45, 0.32);
+}
+
+.claim-card h3 {
+  font-size: 1.35rem;
+}
+
+.risk-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.risk-row strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.1rem;
+}
+
+.link-arrow {
+  color: var(--accent);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  text-transform: capitalize;
+  font-family: "Segoe UI", sans-serif;
+  background: rgba(71, 85, 105, 0.12);
+}
+
+.pill.approve,
+.pill.completed {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pill.reject,
+.pill.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.pill.pending,
+.pill.processing,
+.pill.more-info {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.empty-panel,
+.panel {
+  padding: 22px;
+}
+
+.error-banner {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid rgba(153, 27, 27, 0.14);
+}
+
+.back-link {
+  color: var(--accent);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.preview-panel {
+  grid-column: 1 / -1;
+}
+
+.overlay-stage {
+  position: relative;
+  min-height: 320px;
+  margin-top: 18px;
+  background: #ede7d9;
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(50, 42, 29, 0.08);
+}
+
+.stage-image {
+  width: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.overlay-image {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+
+.artifact-strip,
+.agent-stack,
+.audit-list {
+  display: grid;
+  gap: 12px;
+}
+
+.artifact-strip {
+  margin-top: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.artifact-chip,
+.agent-card,
+.audit-item {
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(50, 42, 29, 0.1);
+  padding: 14px;
+}
+
+.artifact-chip span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: capitalize;
+  margin-bottom: 6px;
+}
+
+.artifact-chip strong {
+  font-size: 0.98rem;
+}
+
+.decision-form {
+  display: grid;
+  gap: 14px;
+}
+
+.decision-form label {
+  display: grid;
+  gap: 8px;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.decision-form input,
+.decision-form textarea,
+.decision-form select {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(50, 42, 29, 0.14);
+  padding: 12px 14px;
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.decision-summary {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.signal-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+
+.signal-table th,
+.signal-table td {
+  text-align: left;
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(50, 42, 29, 0.09);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.report-copy {
+  margin-top: 18px;
+  white-space: pre-line;
+}
+
+.audit-item pre {
+  margin: 10px 0 0;
+  padding: 12px;
+  overflow-x: auto;
+  background: #191612;
+  color: #f8f2e8;
+  border-radius: 14px;
+  font-size: 12px;
+}
+
+.agent-card ul {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  line-height: 1.5;
+}
+
+.opacity-control {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+}
+
+@media (max-width: 960px) {
+  .hero-card,
+  .detail-hero,
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .dashboard-shell,
+  .detail-shell {
+    padding: 20px 14px 40px;
+  }
+
+  .hero-card,
+  .detail-hero,
+  .panel,
+  .empty-panel,
+  .claim-card {
+    border-radius: 20px;
+    padding: 18px;
+  }
+
+  .toolbar-meta,
+  .detail-header,
+  .panel-header,
+  .audit-meta,
+  .agent-topline,
+  .card-topline,
+  .card-footer {
+    flex-direction: column;
+  }
+
+  .risk-row {
+    grid-template-columns: 1fr;
+  }
+}

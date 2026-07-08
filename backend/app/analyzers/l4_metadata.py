@@ -225,7 +225,7 @@ class MetadataAnalyzer(Analyzer):
 
     layer = Layer.L4_METADATA
 
-    async def _run(self, image: bytes, context: ClaimContext) -> SignalResult:
+    async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         img = Image.open(io.BytesIO(image))
         exif = img.getexif()
         tags = {ExifTags.TAGS.get(k, str(k)): str(v) for k, v in exif.items()}

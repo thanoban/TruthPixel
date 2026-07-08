@@ -40,7 +40,7 @@ class RecaptureAnalyzer(Analyzer):
 
     layer = Layer.L3_RECAPTURE
 
-    async def _run(self, image: bytes, context: ClaimContext) -> SignalResult:
+    async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         settings = get_settings()
         if not settings.sightengine_api_user or not settings.sightengine_api_secret:
             return SignalResult(
