@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -18,6 +18,9 @@ class ClaimRecord(Base):
     __tablename__ = "claims"
 
     claim_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tenants.tenant_id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
@@ -42,6 +45,54 @@ class ClaimRecord(Base):
     artifacts: Mapped[list["ArtifactRecord"]] = relationship(
         back_populates="claim", cascade="all, delete-orphan"
     )
+    tenant: Mapped["TenantRecord | None"] = relationship(back_populates="claims")
+
+
+class TenantRecord(Base):
+    __tablename__ = "tenants"
+
+    tenant_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    rate_limit_requests: Mapped[int] = mapped_column(Integer, default=120)
+    rate_limit_window_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    claims: Mapped[list["ClaimRecord"]] = relationship(back_populates="tenant")
+    api_keys: Mapped[list["ApiKeyRecord"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+
+
+class ApiKeyRecord(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.tenant_id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    key_prefix: Mapped[str] = mapped_column(String(20), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    rate_limit_requests: Mapped[int] = mapped_column(Integer, default=120)
+    rate_limit_window_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    tenant: Mapped["TenantRecord"] = relationship(back_populates="api_keys")
+
+
+class RateLimitEventRecord(Base):
+    __tablename__ = "rate_limit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope_type: Mapped[str] = mapped_column(String(30), index=True)
+    scope_key: Mapped[str] = mapped_column(String(200), index=True)
+    route: Mapped[str] = mapped_column(String(200))
+    tenant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tenants.tenant_id"), nullable=True, index=True
+    )
+    api_key_id: Mapped[int | None] = mapped_column(ForeignKey("api_keys.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class AuditEventRecord(Base):
