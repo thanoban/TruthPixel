@@ -6,10 +6,16 @@ calibrated meta-classifier (stacking + Platt/isotonic + SHAP) trained on
 labeled claims — same inputs/outputs, so it's a drop-in swap.
 
 Must handle any signal being absent (layer error / agents skipped): fusion
-degrades gracefully instead of failing.
+degrades gracefully instead of failing. If a trained learned-fusion artifact is
+configured, it is used as a drop-in replacement; otherwise the weighted fallback
+remains the default.
 """
 
+import os
+from pathlib import Path
+
 from ..config import get_settings
+from .learned import load_learned_fusion_model
 from ..schemas import AgentFinding, FusionResult, Layer, SignalResult
 
 # Base weights encode prior trust per layer. L4 metadata is deliberately low:
@@ -27,9 +33,7 @@ BASE_WEIGHTS: dict[str, float] = {
 RECAPTURE_COMBO_BOOST = 0.15
 
 
-def fuse(signals: list[SignalResult], agents: list[AgentFinding]) -> FusionResult:
-    settings = get_settings()
-
+def _weighted_fuse(signals: list[SignalResult], agents: list[AgentFinding]) -> FusionResult:
     inputs: list[tuple[str, float, float]] = [
         (s.layer.value, s.score, s.confidence)
         for s in signals
@@ -44,7 +48,12 @@ def fuse(signals: list[SignalResult], agents: list[AgentFinding]) -> FusionResul
     total = sum(w for _, _, w in weighted)
     if total <= 0:
         # No usable signal at all — force human review, never silently pass.
-        return FusionResult(risk_score=0.5, needs_review=True, contributions={})
+        return FusionResult(
+            risk_score=0.5,
+            needs_review=True,
+            contributions={},
+            fusion_version="weighted-avg-0.1",
+        )
 
     risk = sum(score * w for _, score, w in weighted) / total
 
@@ -64,6 +73,22 @@ def fuse(signals: list[SignalResult], agents: list[AgentFinding]) -> FusionResul
     }
     return FusionResult(
         risk_score=round(risk, 4),
-        needs_review=risk >= settings.review_threshold,
+        needs_review=False,
         contributions=contributions,
+        fusion_version="weighted-avg-0.1",
     )
+
+
+def fuse(signals: list[SignalResult], agents: list[AgentFinding]) -> FusionResult:
+    settings = get_settings()
+    learned_path = os.getenv("FUSION_MODEL_PATH", "").strip()
+    if learned_path:
+        try:
+            model = load_learned_fusion_model(str(Path(learned_path).expanduser().resolve()))
+            return model.score(signals, agents, settings.review_threshold)
+        except Exception:
+            pass
+
+    result = _weighted_fuse(signals, agents)
+    result.needs_review = result.risk_score >= settings.review_threshold
+    return result
