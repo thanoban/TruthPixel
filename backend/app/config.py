@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     app_env: str = "local"
     log_level: str = "INFO"
+    database_url: str = "sqlite:///./truthpixel.db"
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers.
