@@ -65,10 +65,30 @@ cd ../webapp
 npm install
 cp .env.local.example .env.local
 npm run dev   # http://localhost:3000
+
+# 4. Run the repo test suite from the project root
+cd ..
+backend\.venv\Scripts\python -m pytest
 ```
 
 Optional local infra (Postgres / Redis / Qdrant / MinIO) via `docker compose up -d`.
 Not required for the stub API.
+
+## Layer 1 training scaffold
+
+The `ml/layer1_aigen/` package now includes:
+- GenImage-style dataset discovery and stable train/val/test assignment
+- Screenshot/re-save augmentation helpers aligned with `docs/ML_PLAN.md`
+- A frozen OpenCLIP encoder + trainable probe-head scaffold
+- Train/eval CLI entry points and lightweight ML helper tests
+
+To work on `L1` locally:
+
+```bash
+cd ml
+pip install -r requirements.txt
+python -m layer1_aigen.train --data-root path/to/dataset
+```
 
 ## Status
 

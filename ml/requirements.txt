@@ -1,0 +1,5 @@
+torch>=2.4
+torchvision>=0.19
+open_clip_torch>=2.26
+numpy>=2.1
+pillow>=10.3
