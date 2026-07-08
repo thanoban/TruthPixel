@@ -11,6 +11,7 @@ import httpx
 from .artifacts import get_artifact_store
 from .config import get_settings
 from .graph import run_claim
+from .signal_artifacts import persist_signal_artifacts
 from .storage import (
     create_or_update_claim,
     get_claim,
@@ -72,6 +73,7 @@ def process_claim_job(claim_id: str) -> None:
     try:
         image = get_artifact_store().get_bytes(original.storage_key)
         report = _run_claim_sync(image, claim.context, claim_id)
+        persist_signal_artifacts(claim_id, report.signals, tenant_id=claim.tenant_id)
         create_or_update_claim(report)
         _dispatch_webhook(claim_id)
     except Exception as exc:  # noqa: BLE001
