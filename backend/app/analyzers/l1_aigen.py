@@ -14,7 +14,7 @@ class AiGenAnalyzer(Analyzer):
 
     layer = Layer.L1_AIGEN
 
-    async def _run(self, image: bytes, context: ClaimContext) -> SignalResult:
+    async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         return SignalResult(
             layer=self.layer,
             score=0.5,

@@ -35,7 +35,7 @@ class ClaimState(TypedDict, total=False):
 
 async def node_analyzers(state: ClaimState) -> dict[str, Any]:
     results = await asyncio.gather(
-        *(a().analyze(state["image"], state["context"]) for a in ALL_ANALYZERS)
+        *(a().analyze(state["image"], state["context"], state["claim_id"]) for a in ALL_ANALYZERS)
     )
     return {"signals": list(results)}
 
