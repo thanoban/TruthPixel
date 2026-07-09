@@ -100,6 +100,40 @@ button:disabled {
   object-fit: contain;
 }
 
+.artifact-preview {
+  margin: 20px 0;
+}
+
+.artifact-preview-copy h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.artifact-preview-copy p {
+  margin: 0 0 14px;
+  color: #666;
+}
+
+.overlay-stage {
+  position: relative;
+  display: inline-block;
+}
+
+.overlay-base {
+  display: block;
+}
+
+.overlay-heatmap {
+  position: absolute;
+  inset: 0;
+}
+
+.artifact-note {
+  margin: 0 0 16px;
+  color: #8a5c08;
+  font-size: 14px;
+}
+
 .report-text {
   white-space: pre-line;
   line-height: 1.6;

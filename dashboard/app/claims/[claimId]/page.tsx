@@ -82,6 +82,14 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
 
   const originalArtifact = useMemo(() => getArtifact(claim, "original_upload"), [claim]);
   const heatmapArtifact = useMemo(() => getArtifact(claim, "heatmap"), [claim]);
+  const l2Signal = useMemo(
+    () => claim?.signals.find((signal) => signal.layer === "l2_forensics") ?? null,
+    [claim]
+  );
+  const heatmapDiagnostic = useMemo(
+    () => describeHeatmapState(l2Signal, heatmapArtifact),
+    [heatmapArtifact, l2Signal]
+  );
 
   async function handleDecisionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -185,6 +193,7 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               ) : (
                 <p className="muted-copy">No original artifact is stored for this claim yet.</p>
               )}
+              {heatmapDiagnostic && <p className="muted-copy">{heatmapDiagnostic}</p>}
               <div className="artifact-strip">
                 {claim.artifacts.map((artifact) => (
                   <a
@@ -341,4 +350,24 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
       )}
     </main>
   );
+}
+
+function describeHeatmapState(
+  l2Signal: StoredClaim["signals"][number] | null,
+  heatmapArtifact: ClaimArtifact | null
+): string | null {
+  if (!l2Signal || heatmapArtifact) {
+    return null;
+  }
+  if (l2Signal.error) {
+    return `L2 forensics unavailable: ${l2Signal.error}`;
+  }
+  const storageError =
+    typeof l2Signal.evidence.heatmap_storage_error === "string"
+      ? l2Signal.evidence.heatmap_storage_error
+      : null;
+  if (storageError) {
+    return `Heatmap artifact unavailable: ${storageError}`;
+  }
+  return typeof l2Signal.evidence.note === "string" ? l2Signal.evidence.note : null;
 }

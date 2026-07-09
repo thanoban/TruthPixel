@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { StoredClaim } from "./types";
+import type { ClaimArtifact, SignalResult, StoredClaim } from "./types";
 import { LAYER_LABELS } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -38,6 +38,12 @@ export default function Home() {
       setLoading(false);
     }
   }
+
+  const originalArtifact =
+    report?.artifacts.find((artifact) => artifact.kind === "original_upload") ?? null;
+  const heatmapArtifact = report?.artifacts.find((artifact) => artifact.kind === "heatmap") ?? null;
+  const l2Signal = report?.signals.find((signal) => signal.layer === "l2_forensics") ?? null;
+  const heatmapDiagnostic = describeHeatmapState(l2Signal, heatmapArtifact);
 
   return (
     <main>
@@ -76,16 +82,40 @@ export default function Home() {
             </div>
           </div>
 
-          {report.artifacts
-            .filter((a) => a.kind === "heatmap")
-            .map((a) => (
-              <img
-                key={a.id}
-                src={`${API_URL}${a.download_path}`}
-                alt="manipulation heatmap overlay"
-                className="heatmap"
-              />
-            ))}
+          {(originalArtifact || heatmapArtifact) && (
+            <div className="artifact-preview">
+              <div className="artifact-preview-copy">
+                <h2>Artifact preview</h2>
+                <p>Original upload with persisted TruFor heatmap overlay when available.</p>
+              </div>
+              {originalArtifact ? (
+                <div className="overlay-stage">
+                  <img
+                    src={`${API_URL}${originalArtifact.download_path}`}
+                    alt="original claim upload"
+                    className="preview overlay-base"
+                  />
+                  {heatmapArtifact && (
+                    <img
+                      src={`${API_URL}${heatmapArtifact.download_path}`}
+                      alt="manipulation heatmap overlay"
+                      className="preview heatmap overlay-heatmap"
+                    />
+                  )}
+                </div>
+              ) : (
+                heatmapArtifact && (
+                  <img
+                    src={`${API_URL}${heatmapArtifact.download_path}`}
+                    alt="manipulation heatmap overlay"
+                    className="heatmap"
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {heatmapDiagnostic && <p className="artifact-note">{heatmapDiagnostic}</p>}
 
           <p className="report-text">{report.report_text}</p>
 
@@ -146,4 +176,24 @@ export default function Home() {
       )}
     </main>
   );
+}
+
+function describeHeatmapState(
+  l2Signal: SignalResult | null,
+  heatmapArtifact: ClaimArtifact | null
+): string | null {
+  if (!l2Signal || heatmapArtifact) {
+    return null;
+  }
+  if (l2Signal.error) {
+    return `L2 forensics unavailable: ${l2Signal.error}`;
+  }
+  const storageError =
+    typeof l2Signal.evidence.heatmap_storage_error === "string"
+      ? l2Signal.evidence.heatmap_storage_error
+      : null;
+  if (storageError) {
+    return `Heatmap artifact unavailable: ${storageError}`;
+  }
+  return typeof l2Signal.evidence.note === "string" ? l2Signal.evidence.note : null;
 }
