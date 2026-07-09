@@ -6,7 +6,7 @@ import type {
   ReviewDecisionValue,
 } from "./types";
 
-const DASHBOARD_API_URL = "/api";
+const DASHBOARD_API_URL = "/api/claims";
 
 async function parseError(response: Response): Promise<string> {
   try {
@@ -52,19 +52,19 @@ export async function fetchClaimQueue(params: {
     search.set("decided", String(params.decided));
   }
   const suffix = search.toString() ? `?${search.toString()}` : "";
-  return fetchApi<ClaimListItem[]>(`/v1/claims${suffix}`);
+  return fetchApi<ClaimListItem[]>(suffix || "");
 }
 
 export async function fetchClaim(claimId: string): Promise<StoredClaim> {
-  return fetchApi<StoredClaim>(`/v1/claims/${claimId}`);
+  return fetchApi<StoredClaim>(`/${claimId}`);
 }
 
 export async function fetchClaimAudit(claimId: string): Promise<AuditEvent[]> {
-  return fetchApi<AuditEvent[]>(`/v1/claims/${claimId}/audit`);
+  return fetchApi<AuditEvent[]>(`/${claimId}/audit`);
 }
 
 export async function fetchClaimStatus(claimId: string): Promise<ClaimQueueStatus> {
-  return fetchApi<ClaimQueueStatus>(`/v1/claims/${claimId}/status`);
+  return fetchApi<ClaimQueueStatus>(`/${claimId}/status`);
 }
 
 export async function submitDecision(input: {
@@ -73,7 +73,7 @@ export async function submitDecision(input: {
   decision: ReviewDecisionValue;
   reason: string;
 }): Promise<StoredClaim> {
-  return fetchApi<StoredClaim>(`/v1/claims/${input.claimId}/decision`, {
+  return fetchApi<StoredClaim>(`/${input.claimId}/decision`, {
     method: "POST",
     body: JSON.stringify({
       reviewer_id: input.reviewerId,
