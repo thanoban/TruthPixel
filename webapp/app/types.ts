@@ -1,6 +1,9 @@
 // Mirrors backend/app/schemas.py — keep in sync manually until an OpenAPI codegen step exists.
 
 export type LayerId = "l1_aigen" | "l2_forensics" | "l3_recapture" | "l4_metadata" | "l5_context";
+export type ClaimStatus = "pending" | "processing" | "completed" | "failed";
+export type ReviewDecisionValue = "approve" | "reject" | "needs_more_info";
+export type ArtifactKind = "original_upload" | "heatmap";
 
 export interface SignalResult {
   layer: LayerId;
@@ -26,8 +29,8 @@ export interface FusionResult {
   fusion_version: string;
 }
 
-// Backend ClaimContext (schemas.py) — always present on the response, even when the
-// public webapp submits no order/listing fields (they default to "" / []).
+// Always present on the backend response, even when the public webapp submits no
+// order/listing fields.
 export interface ClaimContext {
   order_id: string;
   product_sku: string;
@@ -45,6 +48,40 @@ export interface ClaimReport {
   disclaimer: string;
 }
 
+export interface ClaimDecision {
+  reviewer_id: string;
+  decision: ReviewDecisionValue;
+  reason: string;
+  decided_at: string;
+}
+
+export interface ClaimArtifact {
+  id: number;
+  claim_id: string;
+  kind: ArtifactKind;
+  filename: string;
+  media_type: string;
+  byte_size: number;
+  sha256: string;
+  storage_backend: string;
+  download_path: string;
+  created_at: string;
+}
+
+export interface StoredClaim extends ClaimReport {
+  tenant_id: string | null;
+  created_at: string;
+  updated_at: string;
+  status: ClaimStatus;
+  task_id: string | null;
+  error_message: string | null;
+  webhook_url: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  decision: ClaimDecision | null;
+  artifacts: ClaimArtifact[];
+}
+
 export const LAYER_LABELS: Record<LayerId, string> = {
   l1_aigen: "AI-generation detection",
   l2_forensics: "Manipulation / edit forensics",
@@ -52,3 +89,51 @@ export const LAYER_LABELS: Record<LayerId, string> = {
   l4_metadata: "Metadata & provenance",
   l5_context: "Product context cross-check",
 };
+
+export function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+export function formatScore(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  return value.toFixed(2);
+}
+
+export function formatTimestamp(value: string | null | undefined): string {
+  if (!value) {
+    return "—";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function getArtifactByKind(
+  artifacts: ClaimArtifact[],
+  kind: ArtifactKind,
+): ClaimArtifact | undefined {
+  return artifacts.find((artifact) => artifact.kind === kind);
+}
+
+export function describeSubmissionScope(claim: StoredClaim): string {
+  if (claim.tenant_id === null) {
+    return "Anonymous public submission";
+  }
+  if (claim.tenant_id === "local-dev") {
+    return "Local dev submission";
+  }
+  return "Tenant API-key submission";
+}
