@@ -10,6 +10,7 @@ from PIL import Image
 from ml.layer1_aigen.model import build_probe_head, load_open_clip_encoder
 
 from ..config import get_settings
+from ..hf_inference import run_hf_ensemble
 from ..schemas import ClaimContext, Layer, SignalResult
 from .base import Analyzer
 
@@ -84,25 +85,64 @@ def _load_runtime(model_path: str, configured_device: str) -> dict:
 class AiGenAnalyzer(Analyzer):
     """L1 — AI-generation detection.
 
-    Target: CLIP ViT-L/14 features + trained MLP head (UniversalFakeDetect approach),
-    trained with screenshot augmentation so it detects post-recompression artifacts.
-    Training pipeline lives in ml/layer1_aigen/. Load checkpoint via L1_MODEL_PATH.
-
-    When no checkpoint is configured, this layer degrades to the neutral stub signal.
+    Three modes, in precedence order:
+      1. Local trained CLIP-head checkpoint (L1_MODEL_PATH) — our own head, tuned with
+         screenshot augmentation (see ml/layer1_aigen/). Preferred when available.
+      2. HF Inference API ensemble (HF_API_TOKEN + L1_HF_MODELS) — an ensemble of
+         pretrained detectors called serverlessly. Zero training, zero GPU hosting; the
+         fastest path to real accuracy and robust across generators (independent
+         architectures → uncorrelated errors). See app/hf_inference.py.
+      3. Neutral stub when neither is configured.
     """
 
     layer = Layer.L1_AIGEN
 
     async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         settings = get_settings()
-        if not settings.l1_model_path:
-            return SignalResult(
-                layer=self.layer,
-                score=0.5,
-                confidence=0.1,
-                evidence={"note": "stub — L1_MODEL_PATH not configured"},
-            )
+        if settings.l1_model_path:
+            return await self._run_local_checkpoint(image, settings)
+        if settings.l1_hf_ensemble_configured:
+            return await self._run_hf_ensemble(image, settings)
+        return SignalResult(
+            layer=self.layer,
+            score=0.5,
+            confidence=0.1,
+            evidence={"note": "stub — neither L1_MODEL_PATH nor an HF ensemble configured"},
+        )
 
+    async def _run_hf_ensemble(self, image: bytes, settings) -> SignalResult:
+        result = await run_hf_ensemble(
+            image,
+            models=settings.l1_hf_model_list,
+            token=settings.hf_api_token,
+            timeout_seconds=settings.hf_inference_timeout_seconds,
+        )
+        member_evidence = [
+            {"model": m.model, "ai_probability": m.ai_probability, "error": m.error}
+            for m in result.members
+        ]
+        if result.ai_probability is None:
+            # Every member failed — surface as an error so fusion drops L1, rather than
+            # emitting a misleading neutral score.
+            errors = "; ".join(f"{m.model}: {m.error}" for m in result.members if m.error)
+            raise RuntimeError(f"all HF ensemble members failed: {errors}")
+
+        return SignalResult(
+            layer=self.layer,
+            score=result.ai_probability,
+            confidence=result.confidence,
+            evidence={
+                "provider": "hf-inference-ensemble",
+                "prediction": "ai_generated" if result.ai_probability >= 0.5 else "real_looking",
+                "threshold": 0.5,
+                "members_total": len(result.members),
+                "members_responded": len(result.responded),
+                "members": member_evidence,
+            },
+            model_version="hf-ensemble-" + "+".join(settings.l1_hf_model_list),
+        )
+
+    async def _run_local_checkpoint(self, image: bytes, settings) -> SignalResult:
         runtime = _load_runtime(settings.l1_model_path, settings.l1_model_device)
         with Image.open(io.BytesIO(image)) as pil_image:
             image_rgb = pil_image.convert("RGB")
@@ -123,6 +163,7 @@ class AiGenAnalyzer(Analyzer):
             score=score,
             confidence=_confidence_from_score(score),
             evidence={
+                "provider": "local-clip-head",
                 "checkpoint_path": str(runtime["checkpoint_path"]),
                 "device": runtime["device"],
                 "prediction": "ai_generated" if score >= 0.5 else "real_looking",

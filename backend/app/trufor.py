@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,17 +31,91 @@ class TruForResult:
     model_version: str
 
 
-def _resolve_trufor_entrypoint(repo_dir: str) -> tuple[Path, Path]:
+@dataclass(frozen=True, slots=True)
+class TruForLayout:
+    repo_root: Path
+    workdir: Path
+    entrypoint: Path
+    config_file: Path
+    model_file: Path
+    segformer_weights: Path
+    noiseprint_weights: Path
+
+
+def _resolve_trufor_layout(repo_dir: str, model_file: str, experiment: str) -> TruForLayout:
     root = Path(repo_dir).expanduser().resolve()
+    if not root.exists():
+        raise RuntimeError(f"TruFor repo directory does not exist: {root}")
+    if not root.is_dir():
+        raise RuntimeError(f"TruFor repo path is not a directory: {root}")
+
     direct = root / "test.py"
     nested = root / "TruFor_train_test" / "test.py"
     if direct.exists():
-        return root, direct
-    if nested.exists():
-        return nested.parent, nested
-    raise RuntimeError(
-        "TruFor repo directory must contain test.py or TruFor_train_test/test.py"
+        workdir = root
+        entrypoint = direct
+    elif nested.exists():
+        workdir = nested.parent
+        entrypoint = nested
+    else:
+        raise RuntimeError(
+            "TruFor repo directory must contain test.py or TruFor_train_test/test.py"
+        )
+
+    config_file = workdir / "lib" / "config" / f"{experiment}.yaml"
+    if not config_file.exists():
+        raise RuntimeError(
+            f"TruFor experiment config not found: {config_file}. "
+            "Use an official experiment such as 'trufor_ph3' or point "
+            "L2_TRUFOR_REPO_DIR at a full TruFor checkout."
+        )
+
+    resolved_model_file = Path(model_file).expanduser().resolve()
+    if not resolved_model_file.exists():
+        raise RuntimeError(f"TruFor model file does not exist: {resolved_model_file}")
+    if not resolved_model_file.is_file():
+        raise RuntimeError(f"TruFor model path is not a file: {resolved_model_file}")
+
+    segformer_weights = workdir / "pretrained_models" / "segformers" / "mit_b2.pth"
+    if not segformer_weights.exists():
+        raise RuntimeError(
+            f"TruFor checkout is missing SegFormer-B2 weights: {segformer_weights}"
+        )
+
+    noiseprint_dir = workdir / "pretrained_models" / "noiseprint++"
+    noiseprint_matches = sorted(
+        candidate
+        for pattern in ("*.pth*", "*.th")
+        for candidate in noiseprint_dir.glob(pattern)
     )
+    if not noiseprint_matches:
+        raise RuntimeError(
+            f"TruFor checkout is missing Noiseprint++ weights under: {noiseprint_dir}"
+        )
+
+    return TruForLayout(
+        repo_root=root,
+        workdir=workdir,
+        entrypoint=entrypoint,
+        config_file=config_file,
+        model_file=resolved_model_file,
+        segformer_weights=segformer_weights,
+        noiseprint_weights=noiseprint_matches[0],
+    )
+
+
+def _explain_subprocess_failure(stderr: str, python_executable: str, layout: TruForLayout) -> str:
+    missing_module = re.search(r"ModuleNotFoundError: No module named '([^']+)'", stderr)
+    if missing_module:
+        module_name = missing_module.group(1)
+        return (
+            f"TruFor runtime dependency '{module_name}' is missing in "
+            f"{python_executable}. Install the upstream environment from "
+            f"{layout.workdir / 'trufor_conda.yaml'} or point "
+            "L2_TRUFOR_PYTHON_EXECUTABLE at a Python environment that satisfies the "
+            "official TruFor runtime."
+        )
+    return stderr.strip()
 
 
 def _coerce_probability_map(array: np.ndarray) -> np.ndarray:
@@ -85,9 +160,13 @@ def _render_heatmap_png(
 
 def run_trufor_inference(image: bytes) -> TruForResult:
     settings = get_settings()
-    workdir, script_path = _resolve_trufor_entrypoint(settings.l2_trufor_repo_dir)
     python_executable = settings.l2_trufor_python_executable or sys.executable
-    model_file = str(Path(settings.l2_trufor_model_file).expanduser().resolve())
+    layout = _resolve_trufor_layout(
+        settings.l2_trufor_repo_dir,
+        settings.l2_trufor_model_file,
+        settings.l2_trufor_experiment,
+    )
+    model_file = str(layout.model_file)
 
     try:
         image_size = Image.open(io.BytesIO(image)).size
@@ -103,7 +182,7 @@ def run_trufor_inference(image: bytes) -> TruForResult:
 
         command = [
             python_executable,
-            str(script_path),
+            str(layout.entrypoint),
             "-in",
             str(input_path),
             "-out",
@@ -117,7 +196,7 @@ def run_trufor_inference(image: bytes) -> TruForResult:
         ]
         process = subprocess.run(
             command,
-            cwd=workdir,
+            cwd=layout.workdir,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -129,7 +208,8 @@ def run_trufor_inference(image: bytes) -> TruForResult:
             details = "\n".join(
                 part.strip() for part in (process.stdout, process.stderr) if part and part.strip()
             ).strip()
-            raise RuntimeError(f"TruFor inference failed: {details or 'unknown subprocess error'}")
+            explanation = _explain_subprocess_failure(details, python_executable, layout)
+            raise RuntimeError(f"TruFor inference failed: {explanation or 'unknown subprocess error'}")
 
         outputs = sorted(output_dir.rglob("*.npz"))
         if not outputs:
@@ -167,5 +247,5 @@ def run_trufor_inference(image: bytes) -> TruForResult:
             suspicious_pixel_fraction=round(
                 float((resized_map >= SUSPICIOUS_PIXEL_THRESHOLD).mean()), 4
             ),
-            model_version=f"trufor:{Path(model_file).name or 'trufor'}",
+            model_version=f"trufor:{layout.model_file.name or 'trufor'}",
         )

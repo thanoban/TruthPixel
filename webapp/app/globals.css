@@ -84,6 +84,22 @@ button:disabled {
   color: #555;
 }
 
+.status-badge {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #888;
+  text-transform: capitalize;
+}
+
+.heatmap {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  margin: 16px auto;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
 .report-text {
   white-space: pre-line;
   line-height: 1.6;

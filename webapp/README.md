@@ -21,6 +21,13 @@ Requires the backend running at the URL in `.env.local` (default `http://localho
 with CORS configured to allow `http://localhost:3000` (already the default — see
 `backend/app/config.py`'s `cors_allow_origins`).
 
+**Auth note:** with the backend's default `API_AUTH_ENABLED=false`, every request runs as an
+implicit local-dev tenant and this just works. If you turn auth on
+(`API_AUTH_ENABLED=true`) for anything beyond local dev, you must also set
+`PUBLIC_SUBMISSION_ENABLED=true` in the backend's `.env` — otherwise this webapp's anonymous
+`POST /v1/claims` calls (it never sends an `X-API-Key`) will get a 401. See
+`.env.example`'s "Auth & rate limits" section and `backend/app/auth.py`.
+
 ## Status
 
 Phase 0 scaffold — not yet built/run in this environment. See

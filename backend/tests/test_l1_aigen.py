@@ -18,7 +18,14 @@ def make_jpeg(color: tuple[int, int, int] = (120, 80, 40)) -> bytes:
 
 
 def fake_settings(model_path: str = "", device: str = "cpu"):
-    return SimpleNamespace(l1_model_path=model_path, l1_model_device=device)
+    return SimpleNamespace(
+        l1_model_path=model_path,
+        l1_model_device=device,
+        hf_api_token="",
+        l1_hf_model_list=[],
+        l1_hf_ensemble_configured=False,
+        hf_inference_timeout_seconds=30.0,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +66,7 @@ async def test_aigen_analyzer_returns_stub_without_model_path(monkeypatch):
     assert result.error is None
     assert result.score == 0.5
     assert result.confidence == 0.1
-    assert result.evidence["note"] == "stub — L1_MODEL_PATH not configured"
+    assert result.evidence["note"] == "stub — neither L1_MODEL_PATH nor an HF ensemble configured"
 
 
 @pytest.mark.asyncio

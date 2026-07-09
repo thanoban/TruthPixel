@@ -45,6 +45,46 @@ export interface ClaimReport {
   disclaimer: string;
 }
 
+export type ClaimStatus = "pending" | "processing" | "completed" | "failed";
+export type ReviewDecisionValue = "approve" | "reject" | "needs_more_info";
+
+export interface ClaimDecision {
+  reviewer_id: string;
+  decision: ReviewDecisionValue;
+  reason: string;
+  decided_at: string;
+}
+
+export type ArtifactKind = "original_upload" | "heatmap";
+
+export interface ClaimArtifact {
+  id: number;
+  claim_id: string;
+  kind: ArtifactKind;
+  filename: string;
+  media_type: string;
+  byte_size: number;
+  sha256: string;
+  storage_backend: string;
+  download_path: string;
+  created_at: string;
+}
+
+// Backend POST /v1/claims actually returns StoredClaim (a superset of ClaimReport) —
+// see backend/app/schemas.py::StoredClaim. Use this type for the /v1/claims response.
+export interface StoredClaim extends ClaimReport {
+  created_at: string;
+  updated_at: string;
+  status: ClaimStatus;
+  task_id: string | null;
+  error_message: string | null;
+  webhook_url: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  decision: ClaimDecision | null;
+  artifacts: ClaimArtifact[];
+}
+
 export const LAYER_LABELS: Record<LayerId, string> = {
   l1_aigen: "AI-generation detection",
   l2_forensics: "Manipulation / edit forensics",

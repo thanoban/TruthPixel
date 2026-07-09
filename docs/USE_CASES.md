@@ -12,9 +12,9 @@
 
 | Surface | Who uses it | Auth | Status |
 |---|---|---|---|
-| **B2B API** (`POST /v1/claims`) | Marketplace/platform backends, integrated into their returns flow | Per-tenant API key | Phase 0 scaffold done |
-| **Reviewer dashboard** (`dashboard/`) | A tenant's internal fraud-review staff | SSO / tenant-scoped login | Phase 1 |
-| **Public webapp** (`webapp/`) | Anyone — self-serve, one image at a time | Anonymous (rate-limited) or free API key | **Scaffolded now** |
+| **B2B API** (`POST /v1/claims`) | Marketplace/platform backends, integrated into their returns flow | Per-tenant API key when `API_AUTH_ENABLED=true`; local-dev bypass otherwise | Shipped API surface |
+| **Reviewer dashboard** (`dashboard/`) | A tenant's internal fraud-review staff | Reviewer auth still pending; today it reuses the stored-claim API | Scaffold built on `origin/main` |
+| **Public webapp** (`webapp/`) | Anyone — self-serve, one image at a time | Anonymous path exists; public-IP throttling is available when auth is enabled | Scaffolded now; not re-verified end-to-end here |
 
 All three sit on top of the same `run_claim()` LangGraph pipeline and the same fusion engine —
 one detection core, three doors in. This matters for the moat: every use case feeds the same
@@ -56,8 +56,9 @@ visitor into an enterprise conversation.
 - Calls the same `POST /v1/claims` endpoint the B2B integration uses — zero backend duplication.
 
 **Deferred to Phase 1+:**
-- Anonymous rate limiting (IP or browser-fingerprint based) to control cost — public traffic is
-  the reason Phase 1 formalizes per-tenant/per-key rate limits (see [ROADMAP.md](ROADMAP.md)).
+- Browser-level throttling and product-policy UX on top of the backend's existing public-IP rate
+  limiting — public traffic is the reason Phase 1 hardens the public surface further (see
+  [ROADMAP.md](ROADMAP.md)).
 - Image retention policy for anonymous uploads (short TTL, no persistence beyond the response,
   unlike tenant claims which are retained for audit) — a privacy commitment worth stating on
   the page itself.

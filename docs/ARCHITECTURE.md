@@ -5,6 +5,14 @@
 > Companion docs: [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) ·
 > [AGENTS.md](AGENTS.md) · [USE_CASES.md](USE_CASES.md) · [ROADMAP.md](ROADMAP.md)
 
+## Repo status note
+
+This document mixes target architecture with implementation reality. As of 2026-07-08:
+- `origin/main` already includes the async queue, persistence/audit/artifacts, reviewer dashboard scaffold, tenant/admin auth primitives, public-submission rate limiting, and the `ml/fusion/` training helpers.
+- L3/L4/L5 are genuinely implemented analyzers today.
+- L2 has real TruFor adapter + heatmap artifact plumbing, but still falls back to a neutral stub until an external TruFor checkout and weights are configured.
+- L1 checkpoint loading/tests are already on `main`; what is missing is a trained checkpoint and a configured `L1_MODEL_PATH`, not unmerged runtime code.
+
 ## 0. One-line positioning
 
 Not "an AI-image detector." We are a **multi-signal image-integrity engine**, beachheaded on
@@ -81,15 +89,46 @@ Concrete mitigations baked into the system:
 
 | # | Layer | Primary approach | Build/Buy | Notes |
 |---|---|---|---|---|
-| L1 | AI-generation detection | CLIP ViT-L/14 features + trained MLP head (UniversalFakeDetect approach) + lightweight NPR CNN as second opinion | **Train head only** | Best cross-generator generalization; head is cheap to train |
-| L2 | Manipulation / edit forensics | TruFor (pretrained) for forgery localization + heatmap; CAT-Net/MVSS-Net as alternates | **Buy (pretrained inference)** | Gives the demo-friendly region heatmap |
+| L1 | AI-generation detection | **Ensemble, 3 modes in precedence order:** (1) local trained CLIP-head checkpoint (UniversalFakeDetect approach, screenshot-augmented); (2) **HF Inference API ensemble** of pretrained detectors — zero training, zero GPU hosting; (3) neutral stub | **Buy-then-build** | HF-ensemble path shipped (`app/hf_inference.py` → `l1_aigen.py`); default members Apache-2.0. Local-checkpoint loading also wired; no checkpoint committed yet. See §3a |
+| L2 | Manipulation / edit forensics | TruFor (pretrained) for forgery localization + heatmap; CAT-Net/MVSS-Net as alternates | **Buy (pretrained inference)** | TruFor adapter + heatmap artifact persistence are wired; still stubbed until external repo/weights are configured |
 | L3 | Recapture / screenshot | Sightengine Recapture API (day 1) → custom moiré/screen-artifact CNN (later) | **Buy → Build** | The screenshot-fraud answer |
 | L4 | Metadata & provenance | exiftool + piexif (EXIF), c2patool/c2pa-python (C2PA), SynthID check | **Buy (libs/CLIs)** | Neutral-weight signal only |
-| L5 | E-commerce context cross-check | DINOv2/OpenCLIP embeddings + vector DB (Qdrant) vs seller listing photos; reverse-image search (TinEye/SerpAPI) for reused/stolen damage photos; lighting/shadow consistency | **Build (our moat)** | No public dataset — we build the seller-listing↔claim pair data |
+| L5 | E-commerce context cross-check | **v0 (shipped):** perceptual-hash + color-histogram similarity vs listing photos, plus a direct DB scan against recent claims for reused-photo detection. **v1 (target):** DINOv2/OpenCLIP embeddings + Qdrant ANN search; external reverse-image search (TinEye/SerpAPI) for photos stolen from *outside* our own system; lighting/shadow consistency | **Build (our moat)** | v0 lives in `backend/app/context_checks.py` — no public dataset, we build the seller-listing↔claim pair data for v1 |
 
 **Scope discipline:** we train *one* head (L1) and *one* small recapture model (L3, later
 phase). Everything else is pretrained inference or third-party libs. That keeps compute and
 timeline sane while still being a "legend" fused system.
+
+---
+
+## 3a. L1 as an ensemble — reuse the pretrained field, don't out-train it
+
+The single fastest path to real L1 accuracy is **not** training our own detector first — it's
+calling an **ensemble of pretrained AI-image detectors already served on the HF Inference
+API**. Rationale:
+
+- **Zero training, zero GPU hosting.** These run on HF's serverless inference; we send image
+  bytes and get a label back. Directly answers the "no local GPU / avoid idle GPU cost"
+  constraint (see [ML_PLAN.md](ML_PLAN.md) §6).
+- **Ensembling is the accuracy move, not a shortcut.** Independent architectures (SigLIP, Swin,
+  ViT) make *uncorrelated* errors, so averaging them generalizes better to unseen generators
+  than any single model — the same fusion logic that governs the whole product, applied one
+  level down. L1's own output is already a mini-fusion.
+- **License-aware defaults.** Members ship commercial-safe: `Ateeqq/ai-vs-human-image-detector`
+  (SigLIP, Apache-2.0) + `Nahrawy/AIorNot` (Swin, Apache-2.0). `umm-maybe/AI-image-detector`
+  (CC-BY-4.0, needs attribution) is an optional add. `Organika/sdxl-detector` (682K downloads
+  but **CC-BY-NC**) is eval/demo only — never in the commercial default set.
+
+Implementation (`backend/app/hf_inference.py`): each member's heterogeneous labels
+("artificial"/"human", "ai"/"real", …) are normalized to a single P(AI-generated) by keyword,
+so adding a model needs no per-model config; one member failing (cold model / rate limit)
+doesn't kill L1 — we average whoever answered and only error when *all* fail. Config:
+`HF_API_TOKEN`, `L1_HF_MODELS`, `HF_INFERENCE_TIMEOUT_SECONDS`.
+
+Trajectory: HF ensemble is the day-one detector; our own screenshot-augmented CLIP head
+(when trained) takes precedence and can be *added* to the ensemble as one more member. The
+same pattern is the right long-term answer for L2 as well (prefer a pretrained forensics model
+over a bespoke one where one exists).
 
 ---
 
@@ -137,9 +176,10 @@ LangGraph orchestrator (state graph)
    ├─ Stage A: deterministic analyzers (parallel fan-out — ground-truth signals)
    │    ├─ L1 AI-gen      (serverless GPU: Modal/RunPod)
    │    ├─ L2 forensics   (serverless GPU: TruFor)
-   │    ├─ L3 recapture   (API now → own model later)
-   │    ├─ L4 metadata    (CPU: exiftool/c2pa)
-   │    └─ L5 context     (DINOv2 embed → Qdrant search + reverse-image API)
+   │    ├─ L3 recapture   (Sightengine API — shipped)
+   │    ├─ L4 metadata    (CPU: EXIF + c2patool — shipped)
+   │    └─ L5 context     (v0 shipped: hash+histogram vs listing/recent-claims;
+   │                       v1 target: DINOv2 embed → Qdrant search + reverse-image API)
    │
    ├─ conditional routing:
    │    high-confidence clean ──────────────► skip agents (save credits)
@@ -190,13 +230,25 @@ Enterprise/scale concerns designed in from the start:
 - **Orchestration / agents**: LangGraph state graph; Gemini via Vertex AI
   (`langchain-google-vertexai`) — funded by existing Vertex credits. Stub LLM fallback so
   the graph runs locally with no credentials.
-- **Queue/workers**: Celery + Redis (self-host) or SQS + Lambda/Modal (cloud).
-- **Models**: PyTorch; served on Modal or RunPod serverless GPU (scale-to-zero).
-- **Vector DB**: Qdrant (embeddings for L5 product matching).
-- **Data stores**: Postgres (claims/results/audit), MinIO or S3 (images).
-- **Dashboard**: Next.js + React (reviewer UI, heatmap overlays).
-- **Forensics/metadata**: exiftool, piexif, c2patool/c2pa-python.
-- **3rd-party APIs (early)**: Sightengine (AI-gen + recapture), TinEye/SerpAPI (reverse image).
+- **Queue/workers**: Celery + Redis — **shipped** (`backend/app/jobs.py`, `celery_app.py`);
+  requires a running worker + Redis to actually process async claims, see README quickstart.
+- **Models**: PyTorch; served on Modal or RunPod serverless GPU (scale-to-zero) — target for
+  hosted inference. Today, L1 has training scaffolding plus runtime checkpoint loading on
+  `main`, and L2 has a real TruFor integration path, but both layers still fall back to
+  neutral stubs until external model artifacts are configured.
+- **Vector DB**: Qdrant — **not wired into any code path yet** (docker-compose has a Qdrant
+  service, but L5 v0 uses direct SQL + in-process hashing, no vector index). Target for L5 v1.
+- **Data stores**: SQLite by default (`sqlite:///./truthpixel.db`, override via `DATABASE_URL`
+  for Postgres), local-disk artifact storage by default (override to S3/MinIO via
+  `STORAGE_BACKEND=s3`) — **shipped** (`backend/app/storage/`, `artifacts.py`).
+- **Dashboard**: Next.js + React reviewer scaffold — **built on `origin/main`** with queue,
+  claim detail, decision capture, audit trail, and heatmap overlay; not yet hardened for a
+  deployed reviewer auth flow.
+- **Forensics/metadata**: EXIF (Pillow) + `c2patool` subprocess — **shipped**. `piexif`,
+  `c2pa-python` not currently used.
+- **3rd-party APIs**: Sightengine (recapture) — **shipped and wired** (`l3_recapture.py`,
+  falls back to a neutral stub without API keys). TinEye/SerpAPI (reverse image) — **not
+  implemented**; only placeholder env vars exist in `.env.example`.
 
 ---
 
@@ -219,33 +271,46 @@ AUROC + robustness matrix** (pristine / JPEG / screenshot-sim / social-roundtrip
 ## 8. Phased roadmap
 
 Full checklists in [ROADMAP.md](ROADMAP.md).
-- **Phase 0 — demo:** local end-to-end pipeline; L1 trained, L2 TruFor, L3 Sightengine,
-  agents live on Vertex; exit = the screenshot-of-AI case is flagged with correct explanation.
-- **Phase 1 — product:** queue + persistence, learned fusion, L5 (DINOv2+Qdrant), reviewer
-  dashboard, serverless GPU, published honest benchmark; exit = pilot-able.
+- **Phase 0 — demo:** local end-to-end pipeline; the repo already has queue/persistence/dashboard
+  scaffolding, but a true demo still needs a trained L1 checkpoint, configured TruFor, and live
+  Vertex verification; exit = the screenshot-of-AI case is flagged with correct explanation.
+- **Phase 1 — product:** learned fusion in production, L5 v1 (DINOv2+Qdrant), dashboard/auth
+  hardening, serverless GPU, published honest benchmark; exit = pilot-able.
 - **Phase 2 — enterprise:** own recapture model, multi-tenancy, model registry, drift
   monitoring, retrain-from-reviewer-labels loop, SDK/webhooks.
 
 ---
 
-## 9. Implemented repo layout (Phase 0 scaffold)
+## 9. Implemented repo layout (current — not aspirational)
 
 ```
 backend/
   app/
-    main.py            # FastAPI: POST /v1/claims, GET /health
-    config.py          # pydantic-settings; Vertex + gating + threshold env
-    schemas.py         # SignalResult, AgentFinding, FusionResult, ClaimReport
+    main.py            # FastAPI: sync + async claims, status, decision, audit, artifacts, /health
+    config.py          # pydantic-settings; DB/storage/queue/Vertex/gating/threshold env
+    schemas.py         # SignalResult, AgentFinding, FusionResult, ClaimReport, StoredClaim, ...
     analyzers/         # L1–L5 behind one Analyzer ABC (error-isolated)
+                        #   L1 aigen: runtime loads a configured checkpoint, else neutral stub
+                        #   L2 forensics: TruFor adapter + heatmap artifacts, stub until configured
+                        #   L3 recapture, L4 metadata, L5 context: REAL
     agents/            # Gemini agents (semantic, plausibility, report) + stub fallback
     graph/build.py     # LangGraph: analyzers → gated agents → fusion → report
     fusion/engine.py   # weighted fusion + screenshot-evasion combo rule
-  tests/               # end-to-end smoke + fusion rules
-ml/                    # training scaffolds (see ML_PLAN.md §5)
-webapp/                # public self-serve webapp (thin client, same API)
-dashboard/             # Next.js reviewer UI (Phase 1, internal/tenant-scoped)
+    context_checks.py  # L5 v0: perceptual-hash + histogram image fingerprinting
+    storage/           # SQLAlchemy models + repository (claims, audit events, artifacts)
+    artifacts.py       # local-disk / S3 artifact store
+    jobs.py, celery_app.py  # async claim queue (Celery), webhook dispatch
+  tests/               # smoke, persistence, async-queue, recapture, context-analyzer tests
+ml/
+  layer1_aigen/         # L1 dataset/augment/model/train/eval scaffold
+  fusion/               # learned-fusion feature assembly + training/export helpers
+dashboard/             # reviewer dashboard scaffold (queue/detail/review)
+webapp/                # public self-serve webapp (thin client, same API) — built, not yet run
 docs/                  # this doc suite
 ```
+
+Not yet created: `scripts/`, `ml/recapture/`, and `ml/datagen/`. `dashboard/` and `ml/fusion/`
+now exist; the remaining gap is turning those scaffolds into deployed, model-backed flows.
 
 ---
 
@@ -254,11 +319,11 @@ docs/                  # this doc suite
 Full detail in [USE_CASES.md](USE_CASES.md). Same `run_claim()` pipeline and fusion engine
 behind all three; only auth and context fields differ:
 
-| Surface | Audience | Auth | `ClaimContext` |
-|---|---|---|---|
-| B2B API | Platform backends (returns integration) | per-tenant API key | full (order/listing) |
-| Reviewer dashboard | Tenant's internal fraud-review staff | SSO / tenant login | full, plus decision capture |
-| Public webapp (`webapp/`) | Anyone, self-serve, one image at a time | anonymous (rate-limited later) | none — L5 and damage-plausibility no-op gracefully |
+| Surface | Audience | Auth | `ClaimContext` | Status |
+|---|---|---|---|---|
+| B2B API | Platform backends (returns integration) | tenant API key when `API_AUTH_ENABLED=true`; local-dev bypass otherwise | full (order/listing) | shipped; auth and rate limits are implemented but optional by config |
+| Reviewer dashboard | Tenant's internal fraud-review staff | reviewer auth still pending; today it talks to the stored-claim API surface | full, plus decision capture | scaffold built — queue, claim detail, heatmap overlay, audit, decision capture |
+| Public webapp (`webapp/`) | Anyone, self-serve, one image at a time | anonymous path exists; public-IP throttling is available when auth is enabled | none — L5 and damage-plausibility no-op gracefully | code written, not yet run/verified end-to-end in this environment |
 
 The public webapp is also the top-of-funnel every self-serve competitor (AI-or-Not,
 TrueMedia) uses — ours shows the fusion breakdown instead of a bare percentage, which is the

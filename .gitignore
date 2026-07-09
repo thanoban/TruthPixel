@@ -48,3 +48,7 @@ truthpixel.db
 Thumbs.db
 .idea/
 .vscode/
+
+# Local tool state (not project source)
+.claude/
+.codex/
