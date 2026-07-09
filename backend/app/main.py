@@ -17,6 +17,11 @@ from .auth import (
     require_tenant_api_key,
 )
 from .config import get_settings
+from .feedback_exports import (
+    export_labeled_claims_csv,
+    list_labeled_claim_exports,
+    summarize_labeled_claim_exports,
+)
 from .graph import run_claim
 from .jobs import enqueue_claim_processing
 from .signal_artifacts import persist_signal_artifacts
@@ -31,6 +36,9 @@ from .schemas import (
     ClaimListItem,
     ClaimReport,
     IssuedApiKeyResponse,
+    LabeledClaimExportItem,
+    LabeledClaimSummary,
+    ReviewDecision,
     StoredClaim,
     TenantCreateRequest,
     TenantResponse,
@@ -252,6 +260,54 @@ async def get_claim_audit(claim_id: str, auth: TenantAuth) -> list[AuditEvent]:
     return get_claim_audit_events(claim_id, tenant_id=auth.tenant_id)
 
 
+@app.get("/v1/labels/export", response_model=list[LabeledClaimExportItem])
+async def export_tenant_labeled_claims(
+    auth: TenantAuth,
+    limit: int = Query(default=200, ge=1, le=5000),
+    decision: ReviewDecision | None = Query(default=None),
+    training_ready_only: bool = Query(default=False),
+) -> list[LabeledClaimExportItem]:
+    return list_labeled_claim_exports(
+        limit=limit,
+        tenant_id=auth.tenant_id,
+        decision=decision,
+        training_ready_only=training_ready_only,
+    )
+
+
+@app.get("/v1/labels/export.csv")
+async def export_tenant_labeled_claims_csv(
+    auth: TenantAuth,
+    limit: int = Query(default=200, ge=1, le=5000),
+    decision: ReviewDecision | None = Query(default=None),
+    training_ready_only: bool = Query(default=False),
+) -> Response:
+    items = list_labeled_claim_exports(
+        limit=limit,
+        tenant_id=auth.tenant_id,
+        decision=decision,
+        training_ready_only=training_ready_only,
+    )
+    return Response(
+        content=export_labeled_claims_csv(items),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="truthpixel-labeled-claims.csv"'},
+    )
+
+
+@app.get("/v1/labels/summary", response_model=LabeledClaimSummary)
+async def get_tenant_labeled_claim_summary(
+    auth: TenantAuth,
+    decision: ReviewDecision | None = Query(default=None),
+    training_ready_only: bool = Query(default=False),
+) -> LabeledClaimSummary:
+    return summarize_labeled_claim_exports(
+        tenant_id=auth.tenant_id,
+        decision=decision,
+        training_ready_only=training_ready_only,
+    )
+
+
 @app.get("/v1/claims/{claim_id}/artifacts", response_model=list[ClaimArtifact])
 async def get_claim_artifacts(claim_id: str, auth: TenantAuth) -> list[ClaimArtifact]:
     artifacts = list_claim_artifacts(claim_id, tenant_id=auth.tenant_id)
@@ -342,3 +398,62 @@ async def issue_api_key_route(tenant_id: str, request: ApiKeyCreateRequest) -> I
     if issued is None:
         raise HTTPException(404, "tenant not found")
     return issued
+
+
+@app.get(
+    "/v1/admin/labels/export",
+    response_model=list[LabeledClaimExportItem],
+    dependencies=[Depends(require_admin_token)],
+)
+async def export_admin_labeled_claims(
+    limit: int = Query(default=500, ge=1, le=5000),
+    tenant_id: str | None = Query(default=None),
+    decision: ReviewDecision | None = Query(default=None),
+    training_ready_only: bool = Query(default=False),
+) -> list[LabeledClaimExportItem]:
+    return list_labeled_claim_exports(
+        limit=limit,
+        tenant_id=tenant_id,
+        decision=decision,
+        training_ready_only=training_ready_only,
+    )
+
+
+@app.get(
+    "/v1/admin/labels/export.csv",
+    dependencies=[Depends(require_admin_token)],
+)
+async def export_admin_labeled_claims_csv(
+    limit: int = Query(default=500, ge=1, le=5000),
+    tenant_id: str | None = Query(default=None),
+    decision: ReviewDecision | None = Query(default=None),
+    training_ready_only: bool = Query(default=False),
+) -> Response:
+    items = list_labeled_claim_exports(
+        limit=limit,
+        tenant_id=tenant_id,
+        decision=decision,
+        training_ready_only=training_ready_only,
+    )
+    return Response(
+        content=export_labeled_claims_csv(items),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="truthpixel-admin-labeled-claims.csv"'},
+    )
+
+
+@app.get(
+    "/v1/admin/labels/summary",
+    response_model=LabeledClaimSummary,
+    dependencies=[Depends(require_admin_token)],
+)
+async def get_admin_labeled_claim_summary(
+    tenant_id: str | None = Query(default=None),
+    decision: ReviewDecision | None = Query(default=None),
+    training_ready_only: bool = Query(default=False),
+) -> LabeledClaimSummary:
+    return summarize_labeled_claim_exports(
+        tenant_id=tenant_id,
+        decision=decision,
+        training_ready_only=training_ready_only,
+    )
