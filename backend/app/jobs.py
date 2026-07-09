@@ -11,6 +11,13 @@ import httpx
 from .artifacts import get_artifact_store
 from .config import get_settings
 from .graph import run_claim
+from .observability import (
+    bind_claim_context,
+    clear_context,
+    ensure_trace_id,
+    get_trace_id,
+    log_event,
+)
 from .signal_artifacts import persist_signal_artifacts
 from .storage import (
     create_or_update_claim,
@@ -57,27 +64,57 @@ def _dispatch_webhook(claim_id: str) -> None:
         )
         response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
+        log_event(
+            logger,
+            "claim_webhook_failed",
+            webhook_url=claim.webhook_url,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
         logger.warning("Webhook dispatch failed for claim %s: %s", claim_id, exc)
     else:
+        log_event(logger, "claim_webhook_dispatched", webhook_url=claim.webhook_url)
         logger.info("Webhook dispatched for claim %s", claim_id)
 
 
 def process_claim_job(claim_id: str) -> None:
+    clear_context()
+    ensure_trace_id()
+    bind_claim_context(claim_id=claim_id)
+    log_event(logger, "claim_job_started")
     mark_claim_processing(claim_id)
     claim = get_claim(claim_id)
     original = get_original_artifact_record(claim_id)
     if claim is None or original is None:
         mark_claim_failed(claim_id, "missing claim record or original artifact")
+        log_event(logger, "claim_job_missing_inputs")
+        clear_context()
         return
 
     try:
+        bind_claim_context(tenant_id=claim.tenant_id)
         image = get_artifact_store().get_bytes(original.storage_key)
         report = _run_claim_sync(image, claim.context, claim_id)
         persist_signal_artifacts(claim_id, report.signals, tenant_id=claim.tenant_id)
         create_or_update_claim(report)
+        log_event(
+            logger,
+            "claim_job_completed",
+            risk_score=report.fusion.risk_score,
+            needs_review=report.fusion.needs_review,
+            signal_count=len(report.signals),
+        )
         _dispatch_webhook(claim_id)
     except Exception as exc:  # noqa: BLE001
         mark_claim_failed(claim_id, f"{type(exc).__name__}: {exc}")
+        log_event(
+            logger,
+            "claim_job_failed",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+    finally:
+        clear_context()
 
 
 def _run_claim_sync(image: bytes, context, claim_id: str):
@@ -113,12 +150,24 @@ def register_tasks(celery_app):
 
 def enqueue_claim_processing(claim_id: str) -> str:
     settings = get_settings()
+    request_trace_id = get_trace_id()
     if settings.celery_task_always_eager:
         task_id = f"eager-{uuid4().hex}"
+        if request_trace_id is None:
+            ensure_trace_id()
+        bind_claim_context(claim_id=claim_id)
+        log_event(logger, "claim_job_eager_dispatch", task_id=task_id)
         process_claim_job(claim_id)
+        if request_trace_id is not None:
+            ensure_trace_id(request_trace_id)
+            bind_claim_context(claim_id=claim_id)
         return task_id
 
     celery_app = build_celery_app()
     register_tasks(celery_app)
     result = celery_app.send_task("truthpixel.process_claim", args=[claim_id])
+    if request_trace_id is None:
+        ensure_trace_id()
+    bind_claim_context(claim_id=claim_id)
+    log_event(logger, "claim_job_queued", task_id=str(result.id))
     return str(result.id)
