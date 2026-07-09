@@ -1,6 +1,7 @@
 import io
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import torch
@@ -42,6 +43,7 @@ def write_checkpoint(path: Path) -> None:
             "bias": torch.tensor([0.0], dtype=torch.float32),
         },
         "metadata": {
+            "format_version": 1,
             "encoder": {
                 "model_name": "ViT-L-14",
                 "pretrained": "openai",
@@ -52,6 +54,8 @@ def write_checkpoint(path: Path) -> None:
             "heldout_generators": ["flux", "midjourney"],
             "split_summary": {"train": {"real": 3, "generated": 3}},
             "notes": "unit-test checkpoint",
+            "training": {"batch_size": 16, "learning_rate": 1e-4},
+            "history_summary": {"epochs_completed": 3, "best_val_accuracy": 0.88},
         },
     }
     torch.save(payload, path)
@@ -101,6 +105,10 @@ async def test_aigen_analyzer_runs_checkpoint_inference(monkeypatch, tmp_path):
     assert result.evidence["heldout_generators"] == ["flux", "midjourney"]
     assert result.evidence["image_size"] == [64, 64]
     assert result.evidence["checkpoint_path"].endswith("l1_clip_head.pt")
+    assert result.evidence["checkpoint_format_version"] == 1
+    assert result.evidence["epochs_completed"] == 3
+    assert result.evidence["best_val_accuracy"] == 0.88
+    assert result.evidence["training_batch_size"] == 16
 
 
 @pytest.mark.asyncio
@@ -115,3 +123,43 @@ async def test_aigen_analyzer_isolates_missing_checkpoint(monkeypatch, tmp_path)
 
     assert result.score is None
     assert result.error.startswith("FileNotFoundError: L1 checkpoint not found:")
+
+
+@pytest.mark.asyncio
+async def test_aigen_analyzer_falls_back_to_hf_when_local_checkpoint_fails(monkeypatch, tmp_path):
+    missing_path = tmp_path / "missing.pt"
+    monkeypatch.setattr(
+        "app.analyzers.l1_aigen.get_settings",
+        lambda: SimpleNamespace(
+            l1_model_path=str(missing_path),
+            l1_model_device="cpu",
+            hf_api_token="tok",
+            l1_hf_model_list=["modelA", "modelB"],
+            l1_hf_ensemble_configured=True,
+            hf_inference_timeout_seconds=30.0,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.analyzers.l1_aigen.run_hf_ensemble",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                ai_probability=0.63,
+                confidence=0.61,
+                members=[
+                    SimpleNamespace(model="modelA", ai_probability=0.6, error=None),
+                    SimpleNamespace(model="modelB", ai_probability=0.66, error=None),
+                ],
+                responded=[
+                    SimpleNamespace(model="modelA", ai_probability=0.6, error=None),
+                    SimpleNamespace(model="modelB", ai_probability=0.66, error=None),
+                ],
+            )
+        ),
+    )
+
+    result = await AiGenAnalyzer().analyze(make_jpeg(), ClaimContext())
+
+    assert result.error is None
+    assert result.score == 0.63
+    assert result.evidence["provider"] == "hf-inference-ensemble"
+    assert "fallback_from_local_checkpoint_error" in result.evidence
