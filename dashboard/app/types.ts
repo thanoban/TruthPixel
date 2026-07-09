@@ -34,6 +34,7 @@ export interface ClaimContext {
 export type ClaimStatus = "pending" | "processing" | "completed" | "failed";
 export type ReviewDecisionValue = "approve" | "reject" | "needs_more_info";
 export type ArtifactKind = "original_upload" | "heatmap";
+export type ReviewerAuthMode = "tenant_api_key" | "local_passthrough";
 
 export interface ClaimDecision {
   reviewer_id: string;
@@ -65,6 +66,7 @@ export interface AuditEvent {
 
 export interface ClaimQueueStatus {
   claim_id: string;
+  tenant_id?: string | null;
   status: ClaimStatus;
   task_id: string | null;
   error_message: string | null;
@@ -87,6 +89,7 @@ export interface ClaimReport {
 }
 
 export interface StoredClaim extends ClaimReport {
+  tenant_id?: string | null;
   created_at: string;
   updated_at: string;
   status: ClaimStatus;
@@ -101,6 +104,7 @@ export interface StoredClaim extends ClaimReport {
 
 export interface ClaimListItem {
   claim_id: string;
+  tenant_id: string | null;
   created_at: string;
   updated_at: string;
   status: ClaimStatus;
@@ -111,6 +115,15 @@ export interface ClaimListItem {
   decision: ClaimDecision | null;
   signal_count: number;
   artifact_count: number;
+}
+
+export interface ReviewerContext {
+  apiUrl: string;
+  authMode: ReviewerAuthMode;
+  reviewerIdDefault: string;
+  dashboardLabel: string;
+  tenantLabel: string | null;
+  authHint: string;
 }
 
 export const LAYER_LABELS: Record<LayerId, string> = {
@@ -144,4 +157,35 @@ export function humanizeEvent(eventType: string): string {
 
 export function artifactProxyPath(claimId: string, artifactId: number): string {
   return `/api/claims/${claimId}/artifacts/${artifactId}`;
+}
+
+export function formatRelativeTimestamp(value: string | null | undefined): string {
+  if (!value) {
+    return "—";
+  }
+
+  const deltaMs = Date.now() - new Date(value).getTime();
+  const deltaMinutes = Math.round(deltaMs / 60000);
+  if (Math.abs(deltaMinutes) < 1) {
+    return "just now";
+  }
+  if (Math.abs(deltaMinutes) < 60) {
+    return `${Math.abs(deltaMinutes)} min ${deltaMinutes > 0 ? "ago" : "from now"}`;
+  }
+
+  const deltaHours = Math.round(deltaMinutes / 60);
+  if (Math.abs(deltaHours) < 24) {
+    return `${Math.abs(deltaHours)} hr ${deltaHours > 0 ? "ago" : "from now"}`;
+  }
+
+  const deltaDays = Math.round(deltaHours / 24);
+  return `${Math.abs(deltaDays)} day${Math.abs(deltaDays) === 1 ? "" : "s"} ${deltaDays > 0 ? "ago" : "from now"}`;
+}
+
+export function formatDecisionLabel(value: ReviewDecisionValue): string {
+  return value.replace(/_/g, " ");
+}
+
+export function formatStatusLabel(value: ClaimStatus): string {
+  return value.replace(/_/g, " ");
 }
