@@ -93,7 +93,13 @@ h1 {
 .claim-meta,
 .muted-copy,
 .report-copy,
-.toolbar-meta p {
+.toolbar-meta p,
+.field-hint,
+.status-card p,
+.reviewer-context-banner p,
+.section-header p,
+.meta-stack,
+.refresh-meta {
   color: var(--muted);
   line-height: 1.6;
 }
@@ -160,7 +166,13 @@ button[type="submit"] {
 .audit-meta,
 .agent-topline,
 .card-topline,
-.card-footer {
+.card-footer,
+.artifact-actions,
+.context-badges,
+.card-pill-row,
+.detail-badges,
+.toolbar-actions,
+.section-header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -172,6 +184,11 @@ button[type="submit"] {
   margin-top: 24px;
   display: grid;
   gap: 18px;
+}
+
+.queue-sections {
+  display: grid;
+  gap: 24px;
 }
 
 .queue-grid {
@@ -198,6 +215,11 @@ button[type="submit"] {
   transition: transform 140ms ease, border-color 140ms ease;
 }
 
+.claim-title-block {
+  display: grid;
+  gap: 4px;
+}
+
 .claim-card:hover {
   transform: translateY(-2px);
   border-color: rgba(20, 83, 45, 0.32);
@@ -219,18 +241,46 @@ button[type="submit"] {
   font-size: 1.1rem;
 }
 
+.meta-stack {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.claim-id {
+  margin: 0;
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+
 .link-arrow {
   color: var(--accent);
   font-family: "Segoe UI", sans-serif;
 }
 
-.pill {
+.pill,
+.subtle-pill {
   padding: 6px 10px;
   border-radius: 999px;
   font-size: 12px;
   text-transform: capitalize;
   font-family: "Segoe UI", sans-serif;
+}
+
+.pill {
   background: rgba(71, 85, 105, 0.12);
+}
+
+.subtle-pill {
+  background: rgba(31, 26, 21, 0.06);
+  color: var(--muted);
+}
+
+.subtle-pill.attention {
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .pill.approve,
@@ -271,8 +321,132 @@ button[type="submit"] {
   font-family: "Segoe UI", sans-serif;
 }
 
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reviewer-context-banner,
+.queue-controls,
+.status-strip {
+  margin-top: 18px;
+}
+
+.reviewer-context-banner {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(50, 42, 29, 0.08);
+}
+
+.queue-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(240px, 0.8fr);
+  gap: 16px;
+  align-items: end;
+}
+
+.search-field,
+.switch-row {
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.search-field {
+  display: grid;
+  gap: 8px;
+}
+
+.search-field input {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(50, 42, 29, 0.14);
+  padding: 12px 14px;
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.switch-row input {
+  accent-color: var(--accent);
+}
+
+.refresh-meta {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  text-align: right;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.section-header {
+  margin-bottom: 12px;
+}
+
+.section-count {
+  min-width: 44px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(31, 26, 21, 0.08);
+  text-align: center;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.inline-warning {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid rgba(154, 52, 18, 0.12);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.success-banner {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid rgba(20, 83, 45, 0.14);
+}
+
 .preview-panel {
   grid-column: 1 / -1;
+}
+
+.status-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.status-card {
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 246, 0.86);
+  box-shadow: var(--shadow);
+}
+
+.status-card span {
+  color: var(--muted);
+  font-size: 13px;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.status-card strong {
+  display: block;
+  margin: 10px 0 6px;
+  font-size: 1.08rem;
 }
 
 .overlay-stage {
@@ -295,6 +469,20 @@ button[type="submit"] {
   position: absolute;
   inset: 0;
   height: 100%;
+}
+
+.artifact-actions {
+  margin-top: 18px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.artifact-fallback {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 24px;
 }
 
 .artifact-strip,
@@ -333,6 +521,25 @@ button[type="submit"] {
 .decision-form {
   display: grid;
   gap: 14px;
+}
+
+.choice-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.choice-button {
+  border-radius: 18px;
+  border: 1px solid rgba(50, 42, 29, 0.14);
+  background: var(--panel-strong);
+  padding: 12px 14px;
+  color: var(--text);
+}
+
+.choice-button.active {
+  background: var(--text);
+  color: #fff;
 }
 
 .decision-form label {
@@ -403,7 +610,9 @@ button[type="submit"] {
 @media (max-width: 960px) {
   .hero-card,
   .detail-hero,
-  .detail-grid {
+  .detail-grid,
+  .status-strip,
+  .queue-controls {
     grid-template-columns: 1fr;
   }
 }
@@ -429,11 +638,25 @@ button[type="submit"] {
   .audit-meta,
   .agent-topline,
   .card-topline,
-  .card-footer {
+  .card-footer,
+  .artifact-actions,
+  .context-badges,
+  .card-pill-row,
+  .detail-badges,
+  .toolbar-actions,
+  .section-header {
     flex-direction: column;
   }
 
   .risk-row {
     grid-template-columns: 1fr;
+  }
+
+  .choice-group {
+    grid-template-columns: 1fr;
+  }
+
+  .refresh-meta {
+    text-align: left;
   }
 }
