@@ -11,7 +11,7 @@ This document mixes target architecture with implementation reality. As of 2026-
 - `origin/main` already includes the async queue, persistence/audit/artifacts, reviewer dashboard scaffold, tenant/admin auth primitives, public-submission rate limiting, and the `ml/fusion/` training helpers.
 - L3/L4/L5 are genuinely implemented analyzers today.
 - L2 has real TruFor adapter + heatmap artifact plumbing, but still falls back to a neutral stub until an external TruFor checkout and weights are configured.
-- L1 checkpoint loading/tests are already on `main`; what is missing is a trained checkpoint and a configured `L1_MODEL_PATH`, not unmerged runtime code.
+- L1 has both local-checkpoint loading and an HF Inference API ensemble path on `main`; what is missing for the own-model path is a trained checkpoint, while the HF path just needs `HF_API_TOKEN`.
 
 ## 0. One-line positioning
 
@@ -138,6 +138,15 @@ Each layer emits a normalized `{score ∈ [0,1], confidence, evidence}`. A **met
 (gradient-boosted trees or logistic regression — a stacking model) trained on labeled
 fraud/legit claims combines them into one calibrated risk score.
 
+**Implementation status:** the runtime scorer, training pipeline, and export format for
+exactly this already exist and are tested — `backend/app/fusion/learned.py` (standardized
+logistic regression + Platt-style calibration, loads an exported JSON), `ml/fusion/train_meta.py`
+and `features.py` (trains and exports from labeled claim JSONL). `fuse()` in
+`backend/app/fusion/engine.py` uses the learned model automatically when `FUSION_MODEL_PATH`
+is set (falls back to the weighted average below on any load/score failure, logged not
+swallowed). **What's missing is not code — it's real labeled claims data** to train on; until
+then `FUSION_MODEL_PATH` stays unset and the weighted-average fallback is what actually runs.
+
 - **Calibration** (Platt / isotonic) so "87%" actually means 87% — critical for a threshold
   the business trusts.
 - **Explainability**: report shows per-signal contribution ("inpainting in region X: +0.3;
@@ -233,9 +242,9 @@ Enterprise/scale concerns designed in from the start:
 - **Queue/workers**: Celery + Redis — **shipped** (`backend/app/jobs.py`, `celery_app.py`);
   requires a running worker + Redis to actually process async claims, see README quickstart.
 - **Models**: PyTorch; served on Modal or RunPod serverless GPU (scale-to-zero) — target for
-  hosted inference. Today, L1 has training scaffolding plus runtime checkpoint loading on
-  `main`, and L2 has a real TruFor integration path, but both layers still fall back to
-  neutral stubs until external model artifacts are configured.
+  hosted inference. Today, L1 has training scaffolding, runtime checkpoint loading, and an HF
+  serverless ensemble path on `main`, while L2 has a real TruFor integration path; both layers
+  still fall back safely when their external model artifacts or credentials are absent.
 - **Vector DB**: Qdrant — **not wired into any code path yet** (docker-compose has a Qdrant
   service, but L5 v0 uses direct SQL + in-process hashing, no vector index). Target for L5 v1.
 - **Data stores**: SQLite by default (`sqlite:///./truthpixel.db`, override via `DATABASE_URL`
@@ -272,8 +281,9 @@ AUROC + robustness matrix** (pristine / JPEG / screenshot-sim / social-roundtrip
 
 Full checklists in [ROADMAP.md](ROADMAP.md).
 - **Phase 0 — demo:** local end-to-end pipeline; the repo already has queue/persistence/dashboard
-  scaffolding, but a true demo still needs a trained L1 checkpoint, configured TruFor, and live
-  Vertex verification; exit = the screenshot-of-AI case is flagged with correct explanation.
+  scaffolding, but a true demo still needs a configured non-stub L1 path (HF ensemble or a
+  trained checkpoint), configured TruFor, and live Vertex verification; exit = the
+  screenshot-of-AI case is flagged with correct explanation.
 - **Phase 1 — product:** learned fusion in production, L5 v1 (DINOv2+Qdrant), dashboard/auth
   hardening, serverless GPU, published honest benchmark; exit = pilot-able.
 - **Phase 2 — enterprise:** own recapture model, multi-tenancy, model registry, drift
@@ -290,7 +300,7 @@ backend/
     config.py          # pydantic-settings; DB/storage/queue/Vertex/gating/threshold env
     schemas.py         # SignalResult, AgentFinding, FusionResult, ClaimReport, StoredClaim, ...
     analyzers/         # L1–L5 behind one Analyzer ABC (error-isolated)
-                        #   L1 aigen: runtime loads a configured checkpoint, else neutral stub
+                        #   L1 aigen: local checkpoint -> HF ensemble -> neutral stub
                         #   L2 forensics: TruFor adapter + heatmap artifacts, stub until configured
                         #   L3 recapture, L4 metadata, L5 context: REAL
     agents/            # Gemini agents (semantic, plausibility, report) + stub fallback

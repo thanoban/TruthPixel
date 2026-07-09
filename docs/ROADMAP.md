@@ -2,22 +2,25 @@
 
 > Concrete, checkable milestones. Local-first development; cloud only when it earns its cost.
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
-> [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [AGENTS.md](AGENTS.md)
+> [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [AGENTS.md](AGENTS.md) ·
+> [CORRECTIONS.md](CORRECTIONS.md) (full-system audit log — bugs found/fixed each pass)
 
 ## Reality snapshot — 2026-07-08
 
 Before reading the phase checklist, anchor on the repo as it really exists today:
 
-| Area | Already built on `origin/main` | Branch-only today | Still missing before L1 is truly real |
+| Area | Already built on `origin/main` | Branch-only today | Still missing before the own-model L1 upgrade is complete |
 |---|---|---|---|
 | Core backend | Sync + async claims, persistence, audit log, artifact storage, webhook callbacks, tenant/admin auth hooks, public-submission rate limiting | No major unmerged backend capability confirmed; most historical feature branches already landed on `main` | Hosted auth rollout, worker/GPU deployment, observability |
-| Signal layers | L1 checkpoint loading, L2 TruFor adapter + heatmap artifact persistence, L3 Sightengine, L4 EXIF + `c2patool`, L5 v0 hash/histogram checks | No meaningful branch-only signal-layer implementation confirmed | Train and evaluate a real L1 checkpoint, configure TruFor artifacts, then verify live inference |
+| Signal layers | L1 local-checkpoint path plus HF ensemble path, L2 TruFor adapter + heatmap artifact persistence, L3 Sightengine, L4 EXIF + `c2patool`, L5 v0 hash/histogram checks | No meaningful branch-only signal-layer implementation confirmed | Train and evaluate a domain-tuned L1 checkpoint, configure TruFor artifacts, then verify live inference |
 | Reviewer surfaces | `dashboard/` exists with queue, claim detail, decision capture, audit trail, and heatmap overlay | — | Auth polish, live API verification, reviewer workflow hardening |
 | ML tooling | `ml/layer1_aigen/` training scaffold and `ml/fusion/` learned-fusion tooling both exist | — | Real data, exported artifacts, calibrated model versions in runtime |
 
 The main distinction is not branch-only code anymore, but configured-vs-unconfigured runtime:
-the repo already contains the L1/L2 integration paths, yet both still degrade to neutral stubs
-until you provide a trained L1 checkpoint and an external TruFor checkout/weights.
+the repo already contains the L1/L2 integration paths, yet they still depend on external
+configuration. L1 can already run via the HF ensemble with `HF_API_TOKEN`, but the
+domain-tuned checkpoint path still needs a real training run; L2 still needs an external
+TruFor checkout/weights.
 
 ## Phase 0 — Working end-to-end demo (target: ~2–4 weeks of evenings)
 
@@ -85,6 +88,10 @@ Remaining:
       the next time `config.py` changes
 - [x] Minimal reviewer dashboard scaffold: queue, score table, claim detail, audit trail,
       decision form, and heatmap overlay — `dashboard/`
+- [x] Fixed: `FUSION_MODEL_PATH` was read via `os.getenv` instead of the `Settings` class, so
+      setting it only in `.env` silently never took effect (and the failure was silently
+      swallowed). Now reads `settings.fusion_model_path`, logs a warning on fallback. See
+      [CORRECTIONS.md](CORRECTIONS.md) 2026-07-08.
 - [ ] Reviewer dashboard hardening: verify against a live API, finish auth/tenant flow, and
       close UX gaps for production reviewers
 - [ ] Demo script: 5 curated images (real damage, SDXL fake, inpainted, screenshot-of-AI, reused photo)

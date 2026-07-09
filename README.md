@@ -21,6 +21,7 @@ final call.
 | [docs/AGENTS.md](docs/AGENTS.md) | LangGraph multi-agent system (Gemini on Vertex AI), cost gating |
 | [docs/USE_CASES.md](docs/USE_CASES.md) | Product surfaces (API / reviewer dashboard / public webapp) and use cases beyond return fraud |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 0–2 checklists and standing decisions |
+| [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | Full-system audit log — bugs found/fixed, finished vs. remaining, dated newest-first |
 
 ## The five signal layers
 
@@ -56,7 +57,8 @@ status.
 
 ```bash
 # 1. Backend API — SQLite DB + local-disk artifact storage are created automatically
-#    on first run (no external services required); L1/L2 analyzers are still stubs.
+#    on first run (no external services required). L1 has a local-checkpoint path plus
+#    an HF-ensemble path; L2 has a TruFor adapter. Both fall back safely when unconfigured.
 cd backend
 python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -87,10 +89,12 @@ for Redis. Without a worker, queued claims stay `pending` forever. For local dev
 either, set `CELERY_TASK_ALWAYS_EAGER=true` (processes synchronously inline — same as tests).
 
 Optional local infra (Postgres / Redis / Qdrant / MinIO) via `docker compose up -d`. Not
-required for the synchronous endpoint or the stub analyzers — defaults are SQLite + local-disk
-storage. Postgres and MinIO/S3 are real, working alternatives (`DATABASE_URL`,
-`STORAGE_BACKEND=s3`); Qdrant is the one service in docker-compose not wired into any code
-path yet (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6).
+required for the synchronous endpoint — defaults are SQLite + local-disk storage. Postgres and
+MinIO/S3 are real, working alternatives (`DATABASE_URL`, `STORAGE_BACKEND=s3`); Qdrant is the
+one service in docker-compose not wired into any code path yet (see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6). L1 still needs either `HF_API_TOKEN` (HF
+ensemble) or `L1_MODEL_PATH` (local checkpoint), and L2 still needs the external TruFor repo
+and weights to stop falling back to its neutral path.
 
 ## Layer 1 training scaffold
 
@@ -119,13 +123,16 @@ Real (not stub) today: **L3** recapture via Sightengine API, **L4** metadata via
 similarity against seller listing photos and recent claims), persistence/audit/artifact
 storage, async queueing, tenant/admin auth hooks, and the reviewer dashboard scaffold.
 
+L1 is a three-mode runtime: local CLIP-head checkpoint first, then an HF Inference API ensemble
+(`HF_API_TOKEN` + `L1_HF_MODELS`), then the neutral stub if neither is configured. That means
+the missing piece for a non-stub L1 is configuration or a trained checkpoint, not missing repo
+code.
+
 Partially real: **L2** has TruFor subprocess integration plus heatmap artifact persistence, but
 falls back to the neutral stub until an external TruFor checkout + weights are configured.
-**L1** already has both the training scaffold and runtime checkpoint-loading path on `main`, but
-there is still no trained checkpoint committed in the repo, so the analyzer stays neutral until
-`L1_MODEL_PATH` is set. Vertex agents run in template/stub mode until `GOOGLE_CLOUD_PROJECT` is set. The
-public webapp and dashboard code both exist, but neither surface has been re-verified end-to-end
-in this environment. Full checklist in [docs/ROADMAP.md](docs/ROADMAP.md).
+Vertex agents run in template/stub mode until `GOOGLE_CLOUD_PROJECT` is set. The public webapp
+and dashboard code both exist; this pass verifies their production builds, not a fresh
+browser-driven end-to-end session. Full checklist in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## License
 
