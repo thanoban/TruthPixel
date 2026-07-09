@@ -1,6 +1,9 @@
 // Mirrors backend/app/schemas.py — keep in sync manually until an OpenAPI codegen step exists.
 
 export type LayerId = "l1_aigen" | "l2_forensics" | "l3_recapture" | "l4_metadata" | "l5_context";
+export type ClaimStatus = "pending" | "processing" | "completed" | "failed";
+export type ReviewDecisionValue = "approve" | "reject" | "needs_more_info";
+export type ArtifactKind = "original_upload" | "heatmap";
 
 export interface SignalResult {
   layer: LayerId;
@@ -26,8 +29,8 @@ export interface FusionResult {
   fusion_version: string;
 }
 
-// Backend ClaimContext (schemas.py) — always present on the response, even when the
-// public webapp submits no order/listing fields (they default to "" / []).
+// Always present on the backend response, even when the public webapp submits no
+// order/listing fields.
 export interface ClaimContext {
   order_id: string;
   product_sku: string;
@@ -45,17 +48,12 @@ export interface ClaimReport {
   disclaimer: string;
 }
 
-export type ClaimStatus = "pending" | "processing" | "completed" | "failed";
-export type ReviewDecisionValue = "approve" | "reject" | "needs_more_info";
-
 export interface ClaimDecision {
   reviewer_id: string;
   decision: ReviewDecisionValue;
   reason: string;
   decided_at: string;
 }
-
-export type ArtifactKind = "original_upload" | "heatmap";
 
 export interface ClaimArtifact {
   id: number;
@@ -73,6 +71,7 @@ export interface ClaimArtifact {
 // Backend POST /v1/claims actually returns StoredClaim (a superset of ClaimReport) —
 // see backend/app/schemas.py::StoredClaim. Use this type for the /v1/claims response.
 export interface StoredClaim extends ClaimReport {
+  tenant_id: string | null;
   created_at: string;
   updated_at: string;
   status: ClaimStatus;
@@ -92,3 +91,51 @@ export const LAYER_LABELS: Record<LayerId, string> = {
   l4_metadata: "Metadata & provenance",
   l5_context: "Product context cross-check",
 };
+
+export function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+export function formatScore(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  return value.toFixed(2);
+}
+
+export function formatTimestamp(value: string | null | undefined): string {
+  if (!value) {
+    return "—";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function getArtifactByKind(
+  artifacts: ClaimArtifact[],
+  kind: ArtifactKind,
+): ClaimArtifact | undefined {
+  return artifacts.find((artifact) => artifact.kind === kind);
+}
+
+export function describeSubmissionScope(claim: StoredClaim): string {
+  if (claim.tenant_id === null) {
+    return "Anonymous public submission";
+  }
+  if (claim.tenant_id === "local-dev") {
+    return "Local dev submission";
+  }
+  return "Tenant API-key submission";
+}
