@@ -107,3 +107,27 @@ The backend tests cover:
 - direct L2 heatmap persistence
 - synchronous claim artifact persistence
 - async claim artifact persistence
+
+## Runtime Diagnostics To Expect
+
+When the TruFor path is not fully configured, TruthPixel keeps the safe L2 stub behavior and
+reports the specific missing config when it can:
+
+- `stub — L2 TruFor repo/model not configured`
+- `stub — L2 TruFor missing L2_TRUFOR_MODEL_FILE`
+
+When TruFor is configured but cannot run, the L2 signal is isolated and the rest of the claim
+still completes. Common messages now include:
+
+- missing interpreter path: `TruFor Python executable does not exist: ...`
+- missing upstream env: `TruFor runtime dependency 'yacs' is missing ...`
+- hung process / bad device choice: `TruFor inference timed out after 180s ...`
+- malformed upstream output: `TruFor output is missing required keys: ...`
+
+Quick checks:
+
+- `GET /health` includes `l2_trufor` with one of `stub`, `partial`, or `configured`
+- the dashboard claim-detail page shows the stored heatmap overlay when present, and otherwise
+  surfaces the L2 diagnostic note/error instead of silently showing nothing
+- the public webapp uses the persisted original-upload + heatmap artifacts together when both
+  are available

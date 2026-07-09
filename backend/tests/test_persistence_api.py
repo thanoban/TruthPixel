@@ -71,6 +71,7 @@ def test_claim_persistence_and_review_flow(monkeypatch, tmp_path):
         l2_signal = next(signal for signal in created["signals"] if signal["layer"] == "l2_forensics")
         assert l2_signal["evidence"]["provider"] == "trufor"
         assert l2_signal["evidence"]["heatmap_available"] is True
+        assert l2_signal["evidence"]["heatmap_download_path"] == heatmap_artifact["download_path"]
         assert l2_signal["evidence"]["heatmap_url"] == heatmap_artifact["download_path"]
 
         fetched = client.get(f"/v1/claims/{claim_id}")
@@ -164,6 +165,28 @@ def test_missing_claim_returns_404(monkeypatch, tmp_path):
     with TestClient(app) as client:
         response = client.get("/v1/claims/missing-claim")
         assert response.status_code == 404
+
+    get_settings.cache_clear()
+    reset_storage_state()
+    reset_artifact_store_state()
+
+
+def test_health_reports_trufor_runtime_status(monkeypatch, tmp_path):
+    db_path = tmp_path / "truthpixel-health.db"
+    artifact_dir = tmp_path / "artifacts"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("LOCAL_ARTIFACT_DIR", artifact_dir.as_posix())
+    monkeypatch.setenv("L2_TRUFOR_REPO_DIR", "D:/fake/trufor")
+    monkeypatch.delenv("L2_TRUFOR_MODEL_FILE", raising=False)
+    get_settings.cache_clear()
+    reset_storage_state()
+    reset_artifact_store_state()
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert response.status_code == 200
+        assert response.json()["l2_trufor"] == "partial"
 
     get_settings.cache_clear()
     reset_storage_state()

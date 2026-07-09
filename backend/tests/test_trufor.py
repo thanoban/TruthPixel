@@ -1,4 +1,5 @@
 import io
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from app.trufor import _resolve_trufor_layout, run_trufor_inference
+from app.trufor import _resolve_python_executable, _resolve_trufor_layout, run_trufor_inference
 
 
 def make_png(size=(64, 64), color=(100, 140, 200)) -> bytes:
@@ -63,6 +64,7 @@ def test_run_trufor_inference_parses_official_npz_output(monkeypatch, tmp_path):
         "app.trufor.get_settings",
         lambda: fake_settings(repo_root=repo_root, model_file=model_file),
     )
+    monkeypatch.setattr("app.trufor._resolve_python_executable", lambda executable: "python")
 
     def fake_run(command, cwd, capture_output, text, encoding, errors, timeout, check):
         output_dir = Path(command[5])
@@ -95,6 +97,7 @@ def test_run_trufor_inference_reports_missing_runtime_dependency(monkeypatch, tm
         "app.trufor.get_settings",
         lambda: fake_settings(repo_root=repo_root, model_file=model_file, python_executable="python"),
     )
+    monkeypatch.setattr("app.trufor._resolve_python_executable", lambda executable: "python")
 
     def fake_run(command, cwd, capture_output, text, encoding, errors, timeout, check):
         return SimpleNamespace(
@@ -114,3 +117,54 @@ def test_run_trufor_inference_reports_missing_runtime_dependency(monkeypatch, tm
     message = str(exc_info.value)
     assert "TruFor runtime dependency 'yacs' is missing" in message
     assert "trufor_conda.yaml" in message
+
+
+def test_resolve_python_executable_rejects_missing_path(tmp_path):
+    with pytest.raises(RuntimeError) as exc_info:
+        _resolve_python_executable(str(tmp_path / "missing-python.exe"))
+
+    assert "TruFor Python executable does not exist" in str(exc_info.value)
+
+
+def test_run_trufor_inference_reports_timeout(monkeypatch, tmp_path):
+    repo_root, model_file = build_trufor_checkout(tmp_path)
+    monkeypatch.setattr(
+        "app.trufor.get_settings",
+        lambda: fake_settings(repo_root=repo_root, model_file=model_file),
+    )
+    monkeypatch.setattr("app.trufor._resolve_python_executable", lambda executable: "python")
+
+    def fake_run(command, cwd, capture_output, text, encoding, errors, timeout, check):
+        raise subprocess.TimeoutExpired(cmd=command, timeout=timeout)
+
+    monkeypatch.setattr("app.trufor.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        run_trufor_inference(make_png())
+
+    assert "timed out after 30s" in str(exc_info.value)
+
+
+def test_run_trufor_inference_reports_missing_required_output_keys(monkeypatch, tmp_path):
+    repo_root, model_file = build_trufor_checkout(tmp_path)
+    monkeypatch.setattr(
+        "app.trufor.get_settings",
+        lambda: fake_settings(repo_root=repo_root, model_file=model_file),
+    )
+    monkeypatch.setattr("app.trufor._resolve_python_executable", lambda executable: "python")
+
+    def fake_run(command, cwd, capture_output, text, encoding, errors, timeout, check):
+        output_dir = Path(command[5])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            output_dir / "claim-input.png.npz",
+            conf=np.array([[0.7, 0.9], [0.6, 0.8]], dtype=np.float32),
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("app.trufor.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        run_trufor_inference(make_png())
+
+    assert "missing required keys: map, score" in str(exc_info.value)

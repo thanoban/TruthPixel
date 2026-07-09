@@ -25,8 +25,18 @@ def make_png(size=(24, 24)) -> bytes:
     return buffer.getvalue()
 
 
-def configured_settings(enabled: bool):
-    return SimpleNamespace(l2_trufor_configured=enabled)
+def configured_settings(
+    enabled: bool,
+    *,
+    missing: list[str] | None = None,
+    runtime_status: str | None = None,
+):
+    missing_settings = missing or ([] if enabled else ["L2_TRUFOR_REPO_DIR", "L2_TRUFOR_MODEL_FILE"])
+    return SimpleNamespace(
+        l2_trufor_configured=enabled,
+        l2_trufor_missing_settings=missing_settings,
+        l2_trufor_runtime_status=runtime_status or ("configured" if enabled else "stub"),
+    )
 
 
 @pytest.mark.asyncio
@@ -41,7 +51,27 @@ async def test_forensics_analyzer_returns_stub_without_trufor(monkeypatch):
     assert result.layer == Layer.L2_FORENSICS
     assert result.score == 0.5
     assert result.evidence["note"] == "stub — L2 TruFor repo/model not configured"
+    assert result.evidence["runtime_status"] == "stub"
+    assert result.evidence["heatmap_download_path"] is None
     assert result.evidence["heatmap_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_forensics_analyzer_reports_partial_trufor_config(monkeypatch):
+    monkeypatch.setattr(
+        "app.analyzers.l2_forensics.get_settings",
+        lambda: configured_settings(
+            enabled=False,
+            missing=["L2_TRUFOR_MODEL_FILE"],
+            runtime_status="partial",
+        ),
+    )
+
+    result = await ForensicsAnalyzer().analyze(b"image-bytes", ClaimContext())
+
+    assert result.error is None
+    assert result.evidence["note"] == "stub — L2 TruFor missing L2_TRUFOR_MODEL_FILE"
+    assert result.evidence["runtime_status"] == "partial"
 
 
 @pytest.mark.asyncio
@@ -72,6 +102,8 @@ async def test_forensics_analyzer_maps_trufor_output(monkeypatch):
     assert result.confidence == 0.73
     assert result.model_version == "trufor:test-weights.pth.tar"
     assert result.evidence["provider"] == "trufor"
+    assert result.evidence["runtime_status"] == "configured"
+    assert result.evidence["heatmap_download_path"] is None
     assert result.evidence["heatmap_url"] is None
     assert result.evidence["heatmap_available"] is False
     assert result.evidence["suspicious_pixel_fraction"] == 0.25
@@ -110,6 +142,7 @@ def test_persist_signal_artifacts_saves_heatmap(monkeypatch, tmp_path):
     assert artifacts[0].kind == "heatmap"
     assert signal.evidence["heatmap_available"] is True
     assert signal.evidence["heatmap_artifact_id"] == artifacts[0].id
+    assert signal.evidence["heatmap_download_path"] == artifacts[0].download_path
     assert signal.evidence["heatmap_url"] == artifacts[0].download_path
     assert INTERNAL_HEATMAP_BYTES_KEY not in signal.evidence
 

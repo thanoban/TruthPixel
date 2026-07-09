@@ -9,6 +9,13 @@ from ..trufor import run_trufor_inference
 from .base import Analyzer
 
 
+def _stub_note(settings) -> str:
+    missing = getattr(settings, "l2_trufor_missing_settings", [])
+    if not missing or len(missing) == 2:
+        return "stub — L2 TruFor repo/model not configured"
+    return f"stub — L2 TruFor missing {', '.join(missing)}"
+
+
 class ForensicsAnalyzer(Analyzer):
     """L2 — manipulation / edit forensics (inpainting, splicing, copy-move).
 
@@ -30,8 +37,10 @@ class ForensicsAnalyzer(Analyzer):
                 score=0.5,
                 confidence=0.1,
                 evidence={
-                    "note": "stub — L2 TruFor repo/model not configured",
+                    "note": _stub_note(settings),
+                    "runtime_status": getattr(settings, "l2_trufor_runtime_status", "stub"),
                     "heatmap_available": False,
+                    "heatmap_download_path": None,
                     "heatmap_url": None,
                 },
             )
@@ -43,7 +52,9 @@ class ForensicsAnalyzer(Analyzer):
             confidence=result.confidence,
             evidence={
                 "provider": "trufor",
+                "runtime_status": getattr(settings, "l2_trufor_runtime_status", "configured"),
                 "heatmap_available": False,
+                "heatmap_download_path": None,
                 "heatmap_url": None,
                 "heatmap_mean": result.heatmap_mean,
                 "heatmap_max": result.heatmap_max,
