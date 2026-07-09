@@ -93,7 +93,14 @@ def evaluate(args: argparse.Namespace) -> dict:
 
     output = {
         "checkpoint": args.checkpoint,
+        "checkpoint_format_version": metadata.get("format_version", 0),
         "heldout_generators": sorted(heldout_generators),
+        "checkpoint_metadata": {
+            "encoder": metadata.get("encoder", {}),
+            "head": metadata.get("head", {}),
+            "split_summary": metadata.get("split_summary", {}),
+            "history_summary": metadata.get("history_summary", {}),
+        },
         "metrics": metrics_by_variant,
     }
     Path(args.report_path).write_text(json.dumps(output, indent=2), encoding="utf-8")

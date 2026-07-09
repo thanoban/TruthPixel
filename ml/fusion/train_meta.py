@@ -16,6 +16,9 @@ from sklearn.model_selection import train_test_split
 
 from .features import FEATURE_NAMES, extract_feature_row, row_to_vector
 
+ARTIFACT_SCHEMA_VERSION = "learned-fusion/v1"
+RUNTIME_LOADER = "backend.app.fusion.learned:LearnedFusionModel"
+
 
 def _sigmoid(value: np.ndarray | float) -> np.ndarray | float:
     clipped = np.clip(value, -60.0, 60.0)
@@ -141,6 +144,7 @@ def train_and_export(
     manifest_path = output_dir / "manifest.json"
 
     exported_model = {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "model_type": "logistic_regression",
         "model_name": model_name,
         "feature_names": list(FEATURE_NAMES),
@@ -152,6 +156,13 @@ def train_and_export(
             "method": "platt",
             "coefficient": float(calibrator.coef_[0][0]),
             "intercept": float(calibrator.intercept_[0]),
+        },
+        "runtime_expectations": {
+            "loader": RUNTIME_LOADER,
+            "feature_layout": "ml.fusion.features.FEATURE_NAMES",
+            "supported_schema_version": ARTIFACT_SCHEMA_VERSION,
+            "supported_calibration_method": "platt",
+            "expects_review_threshold_from_runtime": True,
         },
         "metrics": metrics,
     }
@@ -222,10 +233,15 @@ def train_and_export(
         writer.writerows(background_rows)
 
     manifest = {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "model_name": model_name,
         "model": model_path.name,
         "feature_table": feature_table_path.name,
         "calibration_table": calibration_path.name,
         "shap_background": shap_background_path.name,
+        "runtime_entrypoint": RUNTIME_LOADER,
+        "feature_count": len(FEATURE_NAMES),
+        "required_runtime_files": [model_path.name],
         "metrics": metrics,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

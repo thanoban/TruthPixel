@@ -18,8 +18,9 @@ npm run dev
 ```
 
 Requires the backend running at the URL in `.env.local` (default `http://localhost:8000`)
-with CORS configured to allow `http://localhost:3000` (already the default — see
-`backend/app/config.py`'s `cors_allow_origins`).
+with CORS configured to allow the frontend origin (already the default for both
+`http://localhost:3000` and `http://127.0.0.1:3000` — see `backend/app/config.py`'s
+`cors_allow_origins` and `.env.example`).
 
 **Auth note:** with the backend's default `API_AUTH_ENABLED=false`, every request runs as an
 implicit local-dev tenant and this just works. If you turn auth on
@@ -30,6 +31,10 @@ implicit local-dev tenant and this just works. If you turn auth on
 
 ## Status
 
-Phase 0 scaffold — not yet built/run in this environment. See
-[docs/ROADMAP.md](../docs/ROADMAP.md) for what's deferred (rate limiting, retention policy,
-optional API-key signup for higher usage).
+`npm install` + `npm run dev` verified working against a live local backend (boots on
+`:3000`, renders the upload form, `GET /` returns 200 — see `.codex/runlogs/webapp.out.log`
+for the local verification transcript). Full claim-submission-to-report round trip through
+the browser UI has not been re-verified since the `StoredClaim` type fix landed. See
+[docs/ROADMAP.md](../docs/ROADMAP.md) for what's deferred (retention policy, optional
+API-key signup for higher usage) and [docs/CORRECTIONS.md](../docs/CORRECTIONS.md) for the
+latest full-system audit.

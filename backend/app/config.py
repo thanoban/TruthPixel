@@ -83,6 +83,7 @@ class Settings(BaseSettings):
 
     # Fusion
     review_threshold: float = 0.5
+    fusion_model_path: str = ""
 
     # 3rd-party (optional)
     sightengine_api_user: str = ""

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import io
+import logging
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
 
-from ml.layer1_aigen.model import build_probe_head, load_open_clip_encoder
+from ml.layer1_aigen.model import CHECKPOINT_FORMAT_VERSION, build_probe_head, load_open_clip_encoder
 
 from ..config import get_settings
 from ..hf_inference import run_hf_ensemble
 from ..schemas import ClaimContext, Layer, SignalResult
 from .base import Analyzer
+
+logger = logging.getLogger(__name__)
 
 
 def _confidence_from_score(score: float) -> float:
@@ -25,6 +28,13 @@ def _resolve_device(torch, configured_device: str) -> str:
     if torch.cuda.is_available():
         return "cuda"
     return "cpu"
+
+
+def _build_model_version(metadata: dict) -> str:
+    encoder_cfg = metadata.get("encoder", {})
+    encoder_name = str(encoder_cfg.get("model_name", "unknown"))
+    pretrained_name = str(encoder_cfg.get("pretrained", "unknown"))
+    return f"clip-head-{encoder_name}-{pretrained_name}"
 
 
 @lru_cache(maxsize=4)
@@ -49,6 +59,12 @@ def _load_runtime(model_path: str, configured_device: str) -> dict:
     state_dict = checkpoint.get("head_state_dict")
     if not isinstance(metadata, dict) or not isinstance(state_dict, dict):
         raise RuntimeError("L1 checkpoint missing metadata or head_state_dict")
+    format_version = int(metadata.get("format_version", 0))
+    if format_version > CHECKPOINT_FORMAT_VERSION:
+        raise RuntimeError(
+            f"L1 checkpoint format_version={format_version} is newer than runtime support "
+            f"({CHECKPOINT_FORMAT_VERSION})"
+        )
 
     encoder_cfg = metadata.get("encoder")
     head_cfg = metadata.get("head")
@@ -66,10 +82,6 @@ def _load_runtime(model_path: str, configured_device: str) -> dict:
     head.to(device)
     head.eval()
 
-    encoder_name = str(encoder_cfg.get("model_name", "unknown"))
-    pretrained_name = str(encoder_cfg.get("pretrained", "unknown"))
-    model_version = f"clip-head-{encoder_name}-{pretrained_name}"
-
     return {
         "torch": torch,
         "encode": encode,
@@ -78,7 +90,7 @@ def _load_runtime(model_path: str, configured_device: str) -> dict:
         "device": device,
         "checkpoint_path": checkpoint_path,
         "metadata": metadata,
-        "model_version": model_version,
+        "model_version": _build_model_version(metadata),
     }
 
 
@@ -100,7 +112,20 @@ class AiGenAnalyzer(Analyzer):
     async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         settings = get_settings()
         if settings.l1_model_path:
-            return await self._run_local_checkpoint(image, settings)
+            try:
+                return await self._run_local_checkpoint(image, settings)
+            except Exception as exc:
+                if settings.l1_hf_ensemble_configured:
+                    logger.warning(
+                        "L1 local checkpoint failed, falling back to HF ensemble: %s",
+                        exc,
+                    )
+                    fallback = await self._run_hf_ensemble(image, settings)
+                    fallback.evidence["fallback_from_local_checkpoint_error"] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    return fallback
+                raise
         if settings.l1_hf_ensemble_configured:
             return await self._run_hf_ensemble(image, settings)
         return SignalResult(
@@ -157,6 +182,8 @@ class AiGenAnalyzer(Analyzer):
         metadata = runtime["metadata"]
         encoder_cfg = metadata["encoder"]
         head_cfg = metadata["head"]
+        history_summary = metadata.get("history_summary", {})
+        training_summary = metadata.get("training", {})
 
         return SignalResult(
             layer=self.layer,
@@ -174,6 +201,11 @@ class AiGenAnalyzer(Analyzer):
                 "embedding_dim": encoder_cfg.get("embedding_dim"),
                 "head_type": "mlp" if head_cfg.get("use_mlp", True) else "linear",
                 "head_hidden_dim": head_cfg.get("hidden_dim"),
+                "checkpoint_format_version": metadata.get("format_version", 0),
+                "best_val_accuracy": history_summary.get("best_val_accuracy"),
+                "epochs_completed": history_summary.get("epochs_completed"),
+                "training_batch_size": training_summary.get("batch_size"),
+                "training_learning_rate": training_summary.get("learning_rate"),
                 "image_size": [image_rgb.width, image_rgb.height],
                 "notes": metadata.get("notes", ""),
             },

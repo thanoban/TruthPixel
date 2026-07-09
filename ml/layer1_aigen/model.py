@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+CHECKPOINT_FORMAT_VERSION = 1
 
 
 @dataclass(slots=True)
@@ -27,7 +29,10 @@ class CheckpointMetadata:
     head: HeadConfig
     heldout_generators: list[str]
     split_summary: dict[str, dict[str, int]]
+    format_version: int = CHECKPOINT_FORMAT_VERSION
     notes: str = ""
+    training: dict[str, Any] = field(default_factory=dict)
+    history_summary: dict[str, Any] = field(default_factory=dict)
 
 
 def _require_torch():

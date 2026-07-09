@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 
-from ml.fusion.train_meta import train_and_export
+from ml.fusion.features import FEATURE_NAMES
+from ml.fusion.train_meta import ARTIFACT_SCHEMA_VERSION, RUNTIME_LOADER, train_and_export
 
 
 def _example(claim_id: str, label: int, recapture: float, semantic: float, metadata_absent: bool) -> dict:
@@ -45,13 +46,24 @@ def test_train_and_export_writes_backend_friendly_artifacts(tmp_path: Path):
 
     manifest = train_and_export(input_path, output_dir, shap_background_size=4)
 
+    assert manifest["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
+    assert manifest["model_name"] == "learned-fusion-logreg-v1"
     assert manifest["model"] == "model.json"
+    assert manifest["runtime_entrypoint"] == RUNTIME_LOADER
+    assert manifest["feature_count"] == len(FEATURE_NAMES)
     assert (output_dir / "model.json").exists()
+    assert (output_dir / "manifest.json").exists()
     assert (output_dir / "feature_table.csv").exists()
     assert (output_dir / "calibration.csv").exists()
     assert (output_dir / "shap_background.csv").exists()
 
     model_payload = json.loads((output_dir / "model.json").read_text(encoding="utf-8"))
+    assert model_payload["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
     assert model_payload["model_name"] == "learned-fusion-logreg-v1"
     assert len(model_payload["feature_names"]) == len(model_payload["coefficients"])
+    assert model_payload["runtime_expectations"]["loader"] == RUNTIME_LOADER
+    assert (
+        model_payload["runtime_expectations"]["supported_schema_version"]
+        == ARTIFACT_SCHEMA_VERSION
+    )
     assert model_payload["metrics"]["train_rows"] >= 4
