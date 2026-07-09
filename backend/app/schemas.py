@@ -159,6 +159,46 @@ class ClaimListItem(BaseModel):
     artifact_count: int = Field(ge=0)
 
 
+class LabeledClaimExportItem(BaseModel):
+    claim_id: str
+    tenant_id: str | None = None
+    status: ClaimStatus
+    created_at: datetime
+    decided_at: datetime
+    reviewer_id: str
+    review_decision: ReviewDecision
+    fraud_label: int | None = Field(default=None, ge=0, le=1)
+    review_reason: str = ""
+    context: ClaimContext
+    fusion: FusionResult
+    signal_scores: dict[str, float | None] = Field(default_factory=dict)
+    signal_confidences: dict[str, float] = Field(default_factory=dict)
+    signal_model_versions: dict[str, str] = Field(default_factory=dict)
+    agent_scores: dict[str, float | None] = Field(default_factory=dict)
+    agent_models: dict[str, str] = Field(default_factory=dict)
+    artifact_count: int = Field(ge=0)
+    original_artifact_download_path: str | None = None
+    heatmap_artifact_download_path: str | None = None
+
+
+class LabelDecisionCount(BaseModel):
+    decision: ReviewDecision
+    count: int = Field(ge=0)
+    avg_risk_score: float | None = Field(default=None, ge=0, le=1)
+
+
+class LabelTenantCount(BaseModel):
+    tenant_id: str | None = None
+    count: int = Field(ge=0)
+
+
+class LabeledClaimSummary(BaseModel):
+    total_labeled_claims: int = Field(ge=0)
+    training_ready_claims: int = Field(ge=0)
+    counts_by_decision: list[LabelDecisionCount] = Field(default_factory=list)
+    counts_by_tenant: list[LabelTenantCount] = Field(default_factory=list)
+
+
 class TenantCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     slug: str | None = Field(default=None, min_length=3, max_length=80)
