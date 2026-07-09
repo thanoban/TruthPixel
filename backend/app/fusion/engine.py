@@ -11,12 +11,15 @@ configured, it is used as a drop-in replacement; otherwise the weighted fallback
 remains the default.
 """
 
-import os
+import logging
 from pathlib import Path
 
 from ..config import get_settings
-from .learned import load_learned_fusion_model
+from .learned import LearnedFusionLoadError, load_learned_fusion_model
 from ..schemas import AgentFinding, FusionResult, Layer, SignalResult
+
+logger = logging.getLogger(__name__)
+_warned_learned_fusion_failures: set[str] = set()
 
 # Base weights encode prior trust per layer. L4 metadata is deliberately low:
 # absent/clean metadata is neutral evidence, never proof.
@@ -81,13 +84,31 @@ def _weighted_fuse(signals: list[SignalResult], agents: list[AgentFinding]) -> F
 
 def fuse(signals: list[SignalResult], agents: list[AgentFinding]) -> FusionResult:
     settings = get_settings()
-    learned_path = os.getenv("FUSION_MODEL_PATH", "").strip()
+    learned_path = settings.fusion_model_path.strip()
     if learned_path:
+        resolved_path = str(Path(learned_path).expanduser().resolve())
         try:
-            model = load_learned_fusion_model(str(Path(learned_path).expanduser().resolve()))
+            model = load_learned_fusion_model(resolved_path)
             return model.score(signals, agents, settings.review_threshold)
-        except Exception:
-            pass
+        except LearnedFusionLoadError as exc:
+            warning_key = f"{resolved_path}|{type(exc).__name__}|{exc}"
+            if warning_key not in _warned_learned_fusion_failures:
+                logger.warning(
+                    "Learned fusion artifact at %s is not trustworthy; "
+                    "falling back to weighted average. Reason: %s",
+                    resolved_path,
+                    exc,
+                )
+                _warned_learned_fusion_failures.add(warning_key)
+        except Exception as exc:  # noqa: BLE001 — never let a bad/missing model kill fusion
+            warning_key = f"{resolved_path}|{type(exc).__name__}|{exc}"
+            if warning_key not in _warned_learned_fusion_failures:
+                logger.exception(
+                    "Learned fusion runtime failed unexpectedly for %s; "
+                    "falling back to weighted average.",
+                    resolved_path,
+                )
+                _warned_learned_fusion_failures.add(warning_key)
 
     result = _weighted_fuse(signals, agents)
     result.needs_review = result.risk_score >= settings.review_threshold

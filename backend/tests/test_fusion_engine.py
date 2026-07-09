@@ -1,11 +1,13 @@
 import json
+import logging
 from pathlib import Path
 
 from app.config import get_settings
 from app.fusion import fuse
-from app.fusion.learned import load_learned_fusion_model
+from app.fusion.engine import _warned_learned_fusion_failures
+from app.fusion.learned import LearnedFusionLoadError, load_learned_fusion_model
 from app.schemas import AgentFinding, Layer, SignalResult
-from ml.fusion.train_meta import train_and_export
+from ml.fusion.train_meta import ARTIFACT_SCHEMA_VERSION, train_and_export
 
 
 def _write_training_data(path: Path):
@@ -74,15 +76,20 @@ def _write_training_data(path: Path):
     path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
 
 
+def _clear_runtime_caches():
+    get_settings.cache_clear()
+    load_learned_fusion_model.cache_clear()
+    _warned_learned_fusion_failures.clear()
+
+
 def test_fuse_uses_learned_model_when_configured(tmp_path: Path, monkeypatch):
     input_path = tmp_path / "train.jsonl"
     model_dir = tmp_path / "fusion_model"
     _write_training_data(input_path)
     train_and_export(input_path, model_dir, calibration_fraction=0.5)
 
-    monkeypatch.setenv("FUSION_MODEL_PATH", (model_dir / "model.json").as_posix())
-    get_settings.cache_clear()
-    load_learned_fusion_model.cache_clear()
+    monkeypatch.setenv("FUSION_MODEL_PATH", (model_dir / "manifest.json").as_posix())
+    _clear_runtime_caches()
     try:
         result = fuse(
             [
@@ -103,22 +110,97 @@ def test_fuse_uses_learned_model_when_configured(tmp_path: Path, monkeypatch):
             ],
         )
     finally:
-        get_settings.cache_clear()
-        load_learned_fusion_model.cache_clear()
+        _clear_runtime_caches()
 
     assert result.fusion_version == "learned-fusion-logreg-v1"
     assert result.risk_score > 0.5
     assert "l3_recapture" in result.contributions
+    assert "fusion_context" in result.contributions
 
 
-def test_fuse_falls_back_to_weighted_average_when_model_missing(monkeypatch):
+def test_fuse_falls_back_to_weighted_average_when_model_missing(monkeypatch, caplog):
     monkeypatch.setenv("FUSION_MODEL_PATH", "missing/model.json")
-    get_settings.cache_clear()
-    load_learned_fusion_model.cache_clear()
+    _clear_runtime_caches()
+    caplog.set_level(logging.WARNING)
     try:
         result = fuse([SignalResult(layer=Layer.L1_AIGEN, score=0.8, confidence=0.9)], [])
+        second = fuse([SignalResult(layer=Layer.L1_AIGEN, score=0.8, confidence=0.9)], [])
     finally:
-        get_settings.cache_clear()
-        load_learned_fusion_model.cache_clear()
+        _clear_runtime_caches()
 
     assert result.fusion_version == "weighted-avg-0.1"
+    assert second.fusion_version == "weighted-avg-0.1"
+    assert len(caplog.records) == 1
+    assert "falling back to weighted average" in caplog.records[0].message
+    assert "not trustworthy" in caplog.records[0].message
+
+
+def test_load_learned_model_rejects_mismatched_feature_layout(tmp_path: Path):
+    model_path = tmp_path / "model.json"
+    model_path.write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+                "model_type": "logistic_regression",
+                "model_name": "bad-layout",
+                "feature_names": ["not_real"],
+                "feature_means": [0.0],
+                "feature_scales": [1.0],
+                "coefficients": [0.2],
+                "intercept": 0.0,
+                "calibration": {"method": "platt", "coefficient": 1.0, "intercept": 0.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        load_learned_fusion_model(str(model_path))
+    except LearnedFusionLoadError as exc:
+        assert "feature layout" in str(exc)
+    else:
+        raise AssertionError("Expected LearnedFusionLoadError")
+    finally:
+        load_learned_fusion_model.cache_clear()
+
+
+def test_load_learned_model_rejects_manifest_model_name_mismatch(tmp_path: Path):
+    input_path = tmp_path / "train.jsonl"
+    model_dir = tmp_path / "fusion_model"
+    _write_training_data(input_path)
+    train_and_export(input_path, model_dir, calibration_fraction=0.5)
+
+    manifest_path = model_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["model_name"] = "something-else"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    try:
+        load_learned_fusion_model(str(manifest_path))
+    except LearnedFusionLoadError as exc:
+        assert "Manifest model_name does not match" in str(exc)
+    else:
+        raise AssertionError("Expected LearnedFusionLoadError")
+    finally:
+        load_learned_fusion_model.cache_clear()
+
+
+def test_load_learned_model_rejects_unsupported_calibration_method(tmp_path: Path):
+    input_path = tmp_path / "train.jsonl"
+    model_dir = tmp_path / "fusion_model"
+    _write_training_data(input_path)
+    train_and_export(input_path, model_dir, calibration_fraction=0.5)
+
+    model_path = model_dir / "model.json"
+    payload = json.loads(model_path.read_text(encoding="utf-8"))
+    payload["calibration"]["method"] = "isotonic"
+    model_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    try:
+        load_learned_fusion_model(str(model_path))
+    except LearnedFusionLoadError as exc:
+        assert "Unsupported calibration method" in str(exc)
+    else:
+        raise AssertionError("Expected LearnedFusionLoadError")
+    finally:
+        load_learned_fusion_model.cache_clear()
