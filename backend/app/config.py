@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     l5_recent_claim_window: int = 40
     l1_model_path: str = ""
     l1_model_device: str = "auto"
+    # L1 HF Inference API ensemble (zero-training path). When no local checkpoint is set
+    # but an HF token + model list are, L1 calls these pretrained detectors and averages.
+    # Defaults are commercially-licensed (Apache-2.0). Add Organika/sdxl-detector only for
+    # non-commercial eval — it is CC-BY-NC.
+    hf_api_token: str = ""
+    l1_hf_models: str = "Ateeqq/ai-vs-human-image-detector,Nahrawy/AIorNot"
+    hf_inference_timeout_seconds: float = 30.0
     l2_trufor_repo_dir: str = ""
     l2_trufor_model_file: str = ""
     l2_trufor_python_executable: str = ""
@@ -41,12 +48,24 @@ class Settings(BaseSettings):
     public_rate_limit_window_seconds: int = 3600
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
-    # Comma-separated in env; defaults cover local Next.js dev servers.
-    cors_allow_origins: str = "http://localhost:3000,http://localhost:3001"
+    # Comma-separated in env; defaults cover local Next.js dev servers on localhost
+    # and 127.0.0.1 because both show up in real local verification workflows.
+    cors_allow_origins: str = (
+        "http://localhost:3000,http://localhost:3001,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001"
+    )
 
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
+    @property
+    def l1_hf_model_list(self) -> list[str]:
+        return [m.strip() for m in self.l1_hf_models.split(",") if m.strip()]
+
+    @property
+    def l1_hf_ensemble_configured(self) -> bool:
+        return bool(self.hf_api_token and self.l1_hf_model_list)
 
     @property
     def artifact_dir(self) -> Path:
@@ -64,6 +83,7 @@ class Settings(BaseSettings):
 
     # Fusion
     review_threshold: float = 0.5
+    fusion_model_path: str = ""
 
     # 3rd-party (optional)
     sightengine_api_user: str = ""
@@ -80,8 +100,25 @@ class Settings(BaseSettings):
         return bool(self.google_cloud_project)
 
     @property
+    def l2_trufor_missing_settings(self) -> list[str]:
+        missing: list[str] = []
+        if not self.l2_trufor_repo_dir.strip():
+            missing.append("L2_TRUFOR_REPO_DIR")
+        if not self.l2_trufor_model_file.strip():
+            missing.append("L2_TRUFOR_MODEL_FILE")
+        return missing
+
+    @property
     def l2_trufor_configured(self) -> bool:
-        return bool(self.l2_trufor_repo_dir and self.l2_trufor_model_file)
+        return not self.l2_trufor_missing_settings
+
+    @property
+    def l2_trufor_runtime_status(self) -> str:
+        if self.l2_trufor_configured:
+            return "configured"
+        if len(self.l2_trufor_missing_settings) == 2:
+            return "stub"
+        return "partial"
 
 
 @lru_cache

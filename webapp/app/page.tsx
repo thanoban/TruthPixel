@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ClaimArtifact, StoredClaim } from "./types";
+import type { ClaimArtifact, SignalResult, StoredClaim } from "./types";
 import {
   LAYER_LABELS,
   describeSubmissionScope,
@@ -124,6 +124,8 @@ export default function Home() {
 
   const originalArtifact = report ? getArtifactByKind(report.artifacts, "original_upload") : undefined;
   const heatmapArtifact = report ? getArtifactByKind(report.artifacts, "heatmap") : undefined;
+  const l2Signal = report?.signals.find((signal) => signal.layer === "l2_forensics") ?? null;
+  const heatmapDiagnostic = describeHeatmapState(l2Signal, heatmapArtifact ?? null);
 
   return (
     <main className="page-shell">
@@ -309,8 +311,12 @@ export default function Home() {
                   )}
                 </div>
               ) : (
-                <p className="empty-copy">The backend response did not include a stored original artifact.</p>
+                <p className="empty-copy">
+                  The backend response did not include a stored original artifact.
+                </p>
               )}
+
+              {heatmapDiagnostic && <p className="artifact-note">{heatmapDiagnostic}</p>}
 
               <div className="artifact-list">
                 {report.artifacts.length > 0 ? (
@@ -329,7 +335,9 @@ export default function Home() {
                     </a>
                   ))
                 ) : (
-                  <p className="empty-copy">No downloadable artifacts were returned for this claim.</p>
+                  <p className="empty-copy">
+                    No downloadable artifacts were returned for this claim.
+                  </p>
                 )}
               </div>
             </article>
@@ -397,4 +405,24 @@ export default function Home() {
       )}
     </main>
   );
+}
+
+function describeHeatmapState(
+  l2Signal: SignalResult | null,
+  heatmapArtifact: ClaimArtifact | null
+): string | null {
+  if (!l2Signal || heatmapArtifact) {
+    return null;
+  }
+  if (l2Signal.error) {
+    return `L2 forensics unavailable: ${l2Signal.error}`;
+  }
+  const storageError =
+    typeof l2Signal.evidence.heatmap_storage_error === "string"
+      ? l2Signal.evidence.heatmap_storage_error
+      : null;
+  if (storageError) {
+    return `Heatmap artifact unavailable: ${storageError}`;
+  }
+  return typeof l2Signal.evidence.note === "string" ? l2Signal.evidence.note : null;
 }

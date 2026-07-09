@@ -125,6 +125,10 @@ def train(args: argparse.Namespace) -> dict:
             )
         )
 
+    best_val_accuracy = max((entry["val"]["accuracy"] for entry in history), default=0.0)
+    final_train = history[-1]["train"] if history else {"loss": 0.0, "accuracy": 0.0, "count": 0}
+    final_val = history[-1]["val"] if history else {"loss": 0.0, "accuracy": 0.0, "count": 0}
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     metadata = CheckpointMetadata(
@@ -133,6 +137,22 @@ def train(args: argparse.Namespace) -> dict:
         heldout_generators=sorted(heldout_generators),
         split_summary=summary,
         notes="Phase-0 L1 CLIP-head scaffold trained via frozen image encoder.",
+        training={
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "val_fraction": args.val_fraction,
+            "test_fraction": args.test_fraction,
+            "linear_probe": args.linear_probe,
+            "data_root": str(Path(args.data_root).resolve()),
+            "output_dir": str(output_dir.resolve()),
+        },
+        history_summary={
+            "epochs_completed": len(history),
+            "best_val_accuracy": round(float(best_val_accuracy), 4),
+            "final_train_accuracy": round(float(final_train["accuracy"]), 4),
+            "final_val_accuracy": round(float(final_val["accuracy"]), 4),
+        },
     )
     save_checkpoint(output_dir / "l1_clip_head.pt", head_state_dict=head.state_dict(), metadata=metadata)
     write_metadata_json(output_dir / "l1_clip_head.metadata.json", metadata)

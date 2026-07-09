@@ -43,6 +43,20 @@ cross-check** in a returns-review workflow. The vertical fusion is open ground.
 | [RINE](https://github.com/megvii-research/RINE) | **REUSE (eval)** | Comparison baseline (pretrained-representation approach, like ours) |
 | [CLIP](https://github.com/openai/CLIP) / [OpenCLIP](https://github.com/mlfoundations/open_clip) | **REUSE (backbone)** | Frozen feature extractor for L1 head + L5 similarity |
 
+The models above are research repos (run-it-yourself). The table below is what we **actually
+wired**: pretrained detectors served live on the **HF Inference API**, so L1 works with zero
+training and zero GPU hosting. We call an *ensemble* of them (independent architectures →
+uncorrelated errors → better on unseen generators). Implementation: `backend/app/hf_inference.py`.
+License is load-bearing for a startup — only commercial-safe ones are in the default set.
+
+| HF model | Arch | Downloads | License | Stance |
+|---|---|---|---|---|
+| [Ateeqq/ai-vs-human-image-detector](https://hf.co/Ateeqq/ai-vs-human-image-detector) | SigLIP | 300K | Apache-2.0 | **USE — default ensemble member** |
+| [Nahrawy/AIorNot](https://hf.co/Nahrawy/AIorNot) | Swin | 63K | Apache-2.0 | **USE — default ensemble member** |
+| [umm-maybe/AI-image-detector](https://hf.co/umm-maybe/AI-image-detector) | ViT | 451K | CC-BY-4.0 | **OPTIONAL** — commercial OK *with attribution*; add if it improves ensemble |
+| [haywoodsloan/ai-image-detector-deploy](https://hf.co/haywoodsloan/ai-image-detector-deploy) | SwinV2 | 219K | none stated | **EVAL** — no explicit license; don't ship until clarified |
+| [Organika/sdxl-detector](https://hf.co/Organika/sdxl-detector) | Swin | 682K | **CC-BY-NC-3.0** | **EVAL/DEMO ONLY** — non-commercial; never in the commercial default set |
+
 ## 3. Open-source manipulation-forensics models (Layer 2 candidates)
 
 | Model | Stance | Why |
@@ -90,7 +104,7 @@ Weighting rule everywhere: **absent metadata = neutral**, only positive traces s
 |---|---|---|
 | Sightengine (AI-gen + recapture + image-type) | L1 opinion, L3 | Phase 0 → replaced Phase 2 |
 | TinEye or SerpAPI Lens | L5 reverse-image | Phase 1 |
-| Vertex AI (Gemini) | Agent pass + report writer | Phase 0+, funded by existing credits |
+| Vertex AI (Gemini) | Agent pass + report writer | Phase 0+, cost-gated; existing $1,000 credit may cover this but is scoped to GenAI App Builder — verify before relying on it, see AGENTS.md |
 | Google Vision | OCR on labels/receipts (later idea) | Phase 2+ |
 
 ## 8. Datasets

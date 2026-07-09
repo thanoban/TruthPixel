@@ -68,6 +68,8 @@ export interface ClaimArtifact {
   created_at: string;
 }
 
+// Backend POST /v1/claims actually returns StoredClaim (a superset of ClaimReport) —
+// see backend/app/schemas.py::StoredClaim. Use this type for the /v1/claims response.
 export interface StoredClaim extends ClaimReport {
   tenant_id: string | null;
   created_at: string;

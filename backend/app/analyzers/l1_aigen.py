@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import io
+import logging
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
 
-from ml.layer1_aigen.model import build_probe_head, load_open_clip_encoder
+from ml.layer1_aigen.model import CHECKPOINT_FORMAT_VERSION, build_probe_head, load_open_clip_encoder
 
 from ..config import get_settings
+from ..hf_inference import run_hf_ensemble
 from ..schemas import ClaimContext, Layer, SignalResult
 from .base import Analyzer
+
+logger = logging.getLogger(__name__)
 
 
 def _confidence_from_score(score: float) -> float:
@@ -24,6 +28,13 @@ def _resolve_device(torch, configured_device: str) -> str:
     if torch.cuda.is_available():
         return "cuda"
     return "cpu"
+
+
+def _build_model_version(metadata: dict) -> str:
+    encoder_cfg = metadata.get("encoder", {})
+    encoder_name = str(encoder_cfg.get("model_name", "unknown"))
+    pretrained_name = str(encoder_cfg.get("pretrained", "unknown"))
+    return f"clip-head-{encoder_name}-{pretrained_name}"
 
 
 @lru_cache(maxsize=4)
@@ -48,6 +59,12 @@ def _load_runtime(model_path: str, configured_device: str) -> dict:
     state_dict = checkpoint.get("head_state_dict")
     if not isinstance(metadata, dict) or not isinstance(state_dict, dict):
         raise RuntimeError("L1 checkpoint missing metadata or head_state_dict")
+    format_version = int(metadata.get("format_version", 0))
+    if format_version > CHECKPOINT_FORMAT_VERSION:
+        raise RuntimeError(
+            f"L1 checkpoint format_version={format_version} is newer than runtime support "
+            f"({CHECKPOINT_FORMAT_VERSION})"
+        )
 
     encoder_cfg = metadata.get("encoder")
     head_cfg = metadata.get("head")
@@ -65,10 +82,6 @@ def _load_runtime(model_path: str, configured_device: str) -> dict:
     head.to(device)
     head.eval()
 
-    encoder_name = str(encoder_cfg.get("model_name", "unknown"))
-    pretrained_name = str(encoder_cfg.get("pretrained", "unknown"))
-    model_version = f"clip-head-{encoder_name}-{pretrained_name}"
-
     return {
         "torch": torch,
         "encode": encode,
@@ -77,32 +90,84 @@ def _load_runtime(model_path: str, configured_device: str) -> dict:
         "device": device,
         "checkpoint_path": checkpoint_path,
         "metadata": metadata,
-        "model_version": model_version,
+        "model_version": _build_model_version(metadata),
     }
 
 
 class AiGenAnalyzer(Analyzer):
     """L1 — AI-generation detection.
 
-    Target: CLIP ViT-L/14 features + trained MLP head (UniversalFakeDetect approach),
-    trained with screenshot augmentation so it detects post-recompression artifacts.
-    Training pipeline lives in ml/layer1_aigen/. Load checkpoint via L1_MODEL_PATH.
-
-    When no checkpoint is configured, this layer degrades to the neutral stub signal.
+    Three modes, in precedence order:
+      1. Local trained CLIP-head checkpoint (L1_MODEL_PATH) — our own head, tuned with
+         screenshot augmentation (see ml/layer1_aigen/). Preferred when available.
+      2. HF Inference API ensemble (HF_API_TOKEN + L1_HF_MODELS) — an ensemble of
+         pretrained detectors called serverlessly. Zero training, zero GPU hosting; the
+         fastest path to real accuracy and robust across generators (independent
+         architectures → uncorrelated errors). See app/hf_inference.py.
+      3. Neutral stub when neither is configured.
     """
 
     layer = Layer.L1_AIGEN
 
     async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         settings = get_settings()
-        if not settings.l1_model_path:
-            return SignalResult(
-                layer=self.layer,
-                score=0.5,
-                confidence=0.1,
-                evidence={"note": "stub — L1_MODEL_PATH not configured"},
-            )
+        if settings.l1_model_path:
+            try:
+                return await self._run_local_checkpoint(image, settings)
+            except Exception as exc:
+                if settings.l1_hf_ensemble_configured:
+                    logger.warning(
+                        "L1 local checkpoint failed, falling back to HF ensemble: %s",
+                        exc,
+                    )
+                    fallback = await self._run_hf_ensemble(image, settings)
+                    fallback.evidence["fallback_from_local_checkpoint_error"] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    return fallback
+                raise
+        if settings.l1_hf_ensemble_configured:
+            return await self._run_hf_ensemble(image, settings)
+        return SignalResult(
+            layer=self.layer,
+            score=0.5,
+            confidence=0.1,
+            evidence={"note": "stub — neither L1_MODEL_PATH nor an HF ensemble configured"},
+        )
 
+    async def _run_hf_ensemble(self, image: bytes, settings) -> SignalResult:
+        result = await run_hf_ensemble(
+            image,
+            models=settings.l1_hf_model_list,
+            token=settings.hf_api_token,
+            timeout_seconds=settings.hf_inference_timeout_seconds,
+        )
+        member_evidence = [
+            {"model": m.model, "ai_probability": m.ai_probability, "error": m.error}
+            for m in result.members
+        ]
+        if result.ai_probability is None:
+            # Every member failed — surface as an error so fusion drops L1, rather than
+            # emitting a misleading neutral score.
+            errors = "; ".join(f"{m.model}: {m.error}" for m in result.members if m.error)
+            raise RuntimeError(f"all HF ensemble members failed: {errors}")
+
+        return SignalResult(
+            layer=self.layer,
+            score=result.ai_probability,
+            confidence=result.confidence,
+            evidence={
+                "provider": "hf-inference-ensemble",
+                "prediction": "ai_generated" if result.ai_probability >= 0.5 else "real_looking",
+                "threshold": 0.5,
+                "members_total": len(result.members),
+                "members_responded": len(result.responded),
+                "members": member_evidence,
+            },
+            model_version="hf-ensemble-" + "+".join(settings.l1_hf_model_list),
+        )
+
+    async def _run_local_checkpoint(self, image: bytes, settings) -> SignalResult:
         runtime = _load_runtime(settings.l1_model_path, settings.l1_model_device)
         with Image.open(io.BytesIO(image)) as pil_image:
             image_rgb = pil_image.convert("RGB")
@@ -117,12 +182,15 @@ class AiGenAnalyzer(Analyzer):
         metadata = runtime["metadata"]
         encoder_cfg = metadata["encoder"]
         head_cfg = metadata["head"]
+        history_summary = metadata.get("history_summary", {})
+        training_summary = metadata.get("training", {})
 
         return SignalResult(
             layer=self.layer,
             score=score,
             confidence=_confidence_from_score(score),
             evidence={
+                "provider": "local-clip-head",
                 "checkpoint_path": str(runtime["checkpoint_path"]),
                 "device": runtime["device"],
                 "prediction": "ai_generated" if score >= 0.5 else "real_looking",
@@ -133,6 +201,11 @@ class AiGenAnalyzer(Analyzer):
                 "embedding_dim": encoder_cfg.get("embedding_dim"),
                 "head_type": "mlp" if head_cfg.get("use_mlp", True) else "linear",
                 "head_hidden_dim": head_cfg.get("hidden_dim"),
+                "checkpoint_format_version": metadata.get("format_version", 0),
+                "best_val_accuracy": history_summary.get("best_val_accuracy"),
+                "epochs_completed": history_summary.get("epochs_completed"),
+                "training_batch_size": training_summary.get("batch_size"),
+                "training_learning_rate": training_summary.get("learning_rate"),
                 "image_size": [image_rgb.width, image_rgb.height],
                 "notes": metadata.get("notes", ""),
             },

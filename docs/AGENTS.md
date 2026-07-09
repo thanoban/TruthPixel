@@ -17,8 +17,14 @@ They cannot answer:
 Those are **semantic/contextual** judgments — exactly what a VLM does well. And critically:
 **semantic artifacts survive screenshots.** When a fraudster screenshots an AI image and
 wipes EXIF/PRNU/pixel-noise, the garbled label text and impossible shadow are still in the
-content. The agent pass is our screenshot-evasion backstop. Vertex AI credits make this
-near-free to run.
+content. The agent pass is our screenshot-evasion backstop. The available $1,000 GCP credit
+*may* make this near-free to run — but it's scoped to GenAI App Builder (Vertex AI
+Search/Conversation/Agent Builder), not a blanket Vertex allowance. **Verify the credit
+actually applies to Gemini API calls (a small test call, checked against Billing → Credits)
+before budgeting around it** — do not assume it covers this the way it doesn't cover Colab
+Enterprise GPU (see [COLAB_TRAINING.md](COLAB_TRAINING.md) and [ML_PLAN.md](ML_PLAN.md) §6).
+Cost gating (§ below) keeps the fallback cheap either way — pay-as-you-go Gemini Flash pricing
+is low enough that gated agent calls are affordable without relying on the credit at all.
 
 ## 1. Non-negotiable design rules
 
