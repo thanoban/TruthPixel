@@ -1,0 +1,22 @@
+# Keep secrets and local-only state out of the build context entirely.
+.env
+.env.local
+*.key
+*.pem
+
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+backend/truthpixel.db
+backend/artifact_storage/
+
+node_modules/
+webapp/.next/
+dashboard/.next/
+
+.git/
+.codex/
+.claude/

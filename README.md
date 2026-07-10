@@ -105,6 +105,30 @@ once a DB is current). For a manual check or CLI migration work: `cd backend && 
 New schema changes should be a real migration (`alembic revision --autogenerate -m "..."`,
 reviewed before committing), not another ad-hoc column patch.
 
+## Deploying the backend
+
+`backend/Dockerfile` builds a production image — CPU-only torch (no CUDA wheels, much smaller),
+Pillow's `libgl1`/`libglib2.0-0` system deps included, no `.env` baked in (config comes from
+environment variables at deploy time, matching `.env.example`'s keys). Build from the repo root
+so `backend/models/` (the trained L1 checkpoint, if present) is in the build context:
+
+```bash
+docker build -f backend/Dockerfile -t truthpixel-backend .
+docker run -p 8000:8000 --env-file backend/.env truthpixel-backend
+```
+
+**On Azure** (App Service / Container Apps, targeting Azure-for-Students credits — hosting
+only, not training compute; see [docs/ML_PLAN.md](docs/ML_PLAN.md) §6 for why training itself
+stays on free Colab/Kaggle): push the image to Azure Container Registry, then point an App
+Service (Linux, container) or Container Apps revision at it. Set the same keys from
+`.env.example` as Application Settings / environment variables — at minimum `DATABASE_URL`
+(Azure Database for PostgreSQL, or leave as SQLite for a single-instance low-volume deploy),
+`STORAGE_BACKEND=s3` with an S3-compatible endpoint or Azure Blob via a custom storage backend
+(not yet implemented — `local`/`s3` are the two working options today), and `L1_MODEL_PATH`
+pointing at the checkpoint baked into the image (`./models/l1_clip_head.pt`). First request
+after a cold start pulls the CLIP encoder weights (~1.3GB) if not already cached in the image
+layer — consider a startup health-check warm-up hit before routing real traffic.
+
 ## Layer 1 training scaffold
 
 The `ml/layer1_aigen/` package now includes:

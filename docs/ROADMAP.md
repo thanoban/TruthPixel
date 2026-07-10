@@ -179,7 +179,15 @@ Celery worker still applies.)
       reviewer ergonomics on top of the existing scaffold
 - [ ] Feedback capture → labeled-claims table (fuel for fusion retraining)
 - [ ] Serverless GPU inference (Modal or RunPod) for L1/L2; scale-to-zero
-- [ ] Held-out-generator benchmark + robustness matrix, published in docs
+- [x] Held-out-generator benchmark + robustness matrix, published in docs — 0.9688 AUROC
+      (screenshot_sim, sdxl/midjourney/flux held out), full matrix in
+      [docs/KAGGLE_TRAINING.md](KAGGLE_TRAINING.md) and the L1 own-model item above
+- [x] Backend containerized: `backend/Dockerfile` (CPU-only torch, no `.env` baked in, checkpoint
+      included if `backend/models/` has one) + root `.dockerignore`. **Not yet done:** actually
+      deployed to Azure — Dockerfile is built and documented (README "Deploying the backend")
+      but not pushed to Azure Container Registry or running on App Service/Container Apps yet;
+      also not yet verified the image actually builds/runs in this environment (no Docker
+      daemon available to test against here) — build and smoke-test it before relying on it.
 - [x] AuthN/AuthZ: per-tenant API keys, admin-token-gated key issuance, per-tenant + public-IP rate limits — landed ahead of schedule during Phase 0, see above
 - [ ] Observability: structured logs, per-claim trace, cost counters (Vertex/API spend per claim)
 
