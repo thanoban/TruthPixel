@@ -31,6 +31,14 @@ def get_vision_llm():
         location=settings.google_cloud_location,
         temperature=0.1,
         max_output_tokens=1024,
+        # Gemini 2.5 models spend part of max_output_tokens on hidden "thinking" tokens before
+        # the visible answer (confirmed live: a real call returned usage_metadata with
+        # output_token_details.reasoning=20 even for a 1-word reply) — for agents here, the
+        # output is a short structured JSON blob, not a task that benefits from extended
+        # reasoning, and the thinking tokens were eating enough of the 1024 budget to truncate
+        # the JSON mid-string (semantic_inspector's "Unterminated string" parse failures,
+        # confirmed live 2026-07-10). Disabling it fixes truncation and cuts latency/cost.
+        thinking_budget=0,
     )
 
 

@@ -4,6 +4,44 @@
 > an honest finished-vs-remaining snapshot. Each entry is dated; newest first. This is an audit
 > trail, not a plan — see [ROADMAP.md](ROADMAP.md) for the phase-by-phase plan itself.
 
+## 2026-07-10 (3) — Vertex AI agents wired live; two real bugs found and fixed
+
+Wired `GOOGLE_CLOUD_PROJECT` to a real GCP project (EduFX, GenAI App Builder credit scope —
+Vertex API calls only, confirmed consistent with the credit-scope finding in ROADMAP.md's
+standing decisions; not a new compute allowance). Auth via local `gcloud` Application Default
+Credentials (already present for `thanobansk@gmail.com`) — no service-account key needed for
+local dev. `aiplatform.googleapis.com` already enabled on the project.
+
+Testing this live (not just checking config loads) found two real bugs:
+
+**1. `.env.example`'s default `VERTEX_MODEL=gemini-2.0-flash` 404s on Vertex AI.** Vertex's
+publisher-model namespace uses different names than Google AI Studio's direct Gemini API —
+confirmed by probing several candidate model IDs live against the actual project;
+`gemini-2.0-flash-001` also failed (transient connection error on retry, not conclusively
+ruled out, but `gemini-2.5-flash` responded correctly on the first attempt). Fixed:
+`.env.example` and this deployment's `backend/.env` both updated to `gemini-2.5-flash`, with a
+comment noting this is a live-confirmed value that should be re-checked if Google
+renames/deprecates it.
+
+**2. `semantic_inspector` failed on every real call: `unparseable agent output: Unterminated
+string starting at: line 6 column 5`.** Root cause: `gemini-2.5-flash` spends part of its
+`max_output_tokens` budget on hidden "thinking" tokens before the visible answer (confirmed via
+a real response's `usage_metadata`: `output_token_details: {reasoning: 20}` even for a 1-word
+reply) — with `max_output_tokens=1024` in `backend/app/agents/llm.py`, thinking tokens were
+eating enough of the budget that the JSON response got truncated mid-string on real
+multi-finding outputs. Fixed: `thinking_budget=0` added to the `ChatVertexAI` constructor —
+this task is structured JSON extraction, not something that benefits from extended reasoning,
+so disabling it fixes the truncation and reduces latency/cost as a side benefit. Verified live
+post-fix: `run_semantic_inspector()` called directly against a real photo returned coherent,
+correctly-reasoned findings (score 0.0, confidence 1.0, three specific accurate observations),
+no parse failure.
+
+**Verified end-to-end:** `damage_plausibility` (which was already unaffected by the thinking-
+token bug, since its shorter expected output apparently stayed under the truncation threshold)
+returned real, specific, correct reasoning on a live claim — correctly identified a landscape
+photo as irrelevant to a "damaged product" claim reason with a coherent explanation. This meets
+ROADMAP.md's "Vertex agents live" Phase 0 exit item.
+
 ## 2026-07-10 (2) — demo harness + three real bugs it found live
 
 Backend-only, no model training, no frontend. Built `scripts/demo.py`, the harness behind

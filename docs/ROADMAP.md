@@ -84,7 +84,19 @@ Remaining:
 - [x] Claim persistence + review: SQLite-by-default storage, `GET /v1/claims`,
       `POST /v1/claims/{id}/decision`, `GET /v1/claims/{id}/audit`, artifact upload/download
       (original upload + heatmap) — `backend/app/storage/`, `artifacts.py`
-- [ ] Vertex agents live: set `GOOGLE_CLOUD_PROJECT`, verify semantic inspector on a garbled-text AI image
+- [x] Vertex agents live (2026-07-10): `GOOGLE_CLOUD_PROJECT` set (EduFX project, GenAI App
+      Builder credits — Vertex API calls only, not compute; local auth via `gcloud` ADC, no
+      service-account key needed for dev). **Found and fixed two real bugs getting here:**
+      (1) `.env.example`'s `VERTEX_MODEL=gemini-2.0-flash` 404s as a Vertex publisher model —
+      Vertex's Gemini naming differs from Google AI Studio's; `gemini-2.5-flash` confirmed
+      working live, both `.env.example` and this deploy's `.env` updated. (2) `semantic_inspector`
+      failed on every real call with "unparseable agent output: Unterminated string" — Gemini
+      2.5's hidden "thinking" tokens were eating into `max_output_tokens=1024`, truncating the
+      JSON response mid-string; fixed via `thinking_budget=0` in `backend/app/agents/llm.py`
+      (structured JSON extraction doesn't need extended reasoning; also cuts latency/cost).
+      **Verified live** post-fix: `damage_plausibility` and `semantic_inspector` both return
+      real, coherent, specific Gemini findings (not stub) — e.g. correctly identifying an
+      irrelevant landscape photo as fraud-signal-bearing with a specific explanation.
 - [x] Public webapp scaffold (`webapp/`): upload → fused report, thin client over `/v1/claims`
 - [x] Backend CORS wired for webapp/dashboard origins (`app/config.py::cors_allow_origins`, `main.py` `CORSMiddleware`) — implemented
 - [ ] `npm install` + run webapp against local backend, confirm end-to-end in a browser (not done in this environment)
