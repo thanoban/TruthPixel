@@ -10,7 +10,7 @@ import json
 from langchain_core.messages import HumanMessage
 
 from ..schemas import AgentFinding, ClaimContext
-from .llm import get_vision_llm, image_content_block
+from .llm import get_vision_llm, image_content_block, record_vertex_usage
 
 PROMPT_TEMPLATE = """You are reviewing an e-commerce return claim for fraud.
 
@@ -44,6 +44,12 @@ async def run_damage_plausibility(image: bytes, context: ClaimContext) -> AgentF
     )
     msg = HumanMessage(content=[{"type": "text", "text": prompt}, image_content_block(image)])
     response = await llm.ainvoke([msg])
+    record_vertex_usage(
+        operation="damage_plausibility",
+        model_name=llm.model_name,
+        prompt_text=prompt,
+        response=response,
+    )
     try:
         data = json.loads(response.content.strip().removeprefix("```json").removesuffix("```"))
         return AgentFinding(

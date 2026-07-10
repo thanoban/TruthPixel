@@ -20,7 +20,14 @@ from .auth import (
 from .config import get_settings
 from .graph import run_claim
 from .jobs import enqueue_claim_processing
-from .observability import TRACE_HEADER, bind_claim_context, clear_context, ensure_trace_id, log_event
+from .observability import (
+    TRACE_HEADER,
+    bind_claim_context,
+    clear_context,
+    ensure_trace_id,
+    log_event,
+    log_usage_summary,
+)
 from .signal_artifacts import persist_signal_artifacts
 from .schemas import (
     ArtifactKind,
@@ -193,6 +200,7 @@ async def analyze_claim(
             error_type=type(exc).__name__,
             error_message=str(exc),
         )
+        log_usage_summary(logger, outcome="failed")
         raise
 
     claim = get_claim(claim_id, tenant_id=auth.tenant_id)
@@ -206,6 +214,7 @@ async def analyze_claim(
         signal_count=len(claim.signals),
         artifact_count=len(claim.artifacts),
     )
+    log_usage_summary(logger, outcome="completed")
     return claim
 
 

@@ -17,6 +17,7 @@ from .observability import (
     ensure_trace_id,
     get_trace_id,
     log_event,
+    log_usage_summary,
 )
 from .signal_artifacts import persist_signal_artifacts
 from .storage import (
@@ -77,9 +78,9 @@ def _dispatch_webhook(claim_id: str) -> None:
         logger.info("Webhook dispatched for claim %s", claim_id)
 
 
-def process_claim_job(claim_id: str) -> None:
+def process_claim_job(claim_id: str, trace_id: str | None = None) -> None:
     clear_context()
-    ensure_trace_id()
+    ensure_trace_id(trace_id)
     bind_claim_context(claim_id=claim_id)
     log_event(logger, "claim_job_started")
     mark_claim_processing(claim_id)
@@ -88,6 +89,7 @@ def process_claim_job(claim_id: str) -> None:
     if claim is None or original is None:
         mark_claim_failed(claim_id, "missing claim record or original artifact")
         log_event(logger, "claim_job_missing_inputs")
+        log_usage_summary(logger, reason="missing_inputs")
         clear_context()
         return
 
@@ -104,6 +106,7 @@ def process_claim_job(claim_id: str) -> None:
             needs_review=report.fusion.needs_review,
             signal_count=len(report.signals),
         )
+        log_usage_summary(logger, outcome="completed")
         _dispatch_webhook(claim_id)
     except Exception as exc:  # noqa: BLE001
         mark_claim_failed(claim_id, f"{type(exc).__name__}: {exc}")
@@ -113,6 +116,7 @@ def process_claim_job(claim_id: str) -> None:
             error_type=type(exc).__name__,
             error_message=str(exc),
         )
+        log_usage_summary(logger, outcome="failed")
     finally:
         clear_context()
 
@@ -142,8 +146,8 @@ def _run_claim_sync(image: bytes, context, claim_id: str):
 
 def register_tasks(celery_app):
     @celery_app.task(name="truthpixel.process_claim")
-    def process_claim_task(claim_id: str) -> None:
-        process_claim_job(claim_id)
+    def process_claim_task(claim_id: str, trace_id: str | None = None) -> None:
+        process_claim_job(claim_id, trace_id=trace_id)
 
     return process_claim_task
 
@@ -154,10 +158,10 @@ def enqueue_claim_processing(claim_id: str) -> str:
     if settings.celery_task_always_eager:
         task_id = f"eager-{uuid4().hex}"
         if request_trace_id is None:
-            ensure_trace_id()
+            request_trace_id = ensure_trace_id()
         bind_claim_context(claim_id=claim_id)
         log_event(logger, "claim_job_eager_dispatch", task_id=task_id)
-        process_claim_job(claim_id)
+        process_claim_job(claim_id, trace_id=request_trace_id)
         if request_trace_id is not None:
             ensure_trace_id(request_trace_id)
             bind_claim_context(claim_id=claim_id)
@@ -165,7 +169,7 @@ def enqueue_claim_processing(claim_id: str) -> str:
 
     celery_app = build_celery_app()
     register_tasks(celery_app)
-    result = celery_app.send_task("truthpixel.process_claim", args=[claim_id])
+    result = celery_app.send_task("truthpixel.process_claim", args=[claim_id, request_trace_id])
     if request_trace_id is None:
         ensure_trace_id()
     bind_claim_context(claim_id=claim_id)

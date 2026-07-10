@@ -11,6 +11,7 @@ TRACE_HEADER = "X-Trace-Id"
 _trace_id_var: ContextVar[str | None] = ContextVar("truthpixel_trace_id", default=None)
 _claim_id_var: ContextVar[str | None] = ContextVar("truthpixel_claim_id", default=None)
 _tenant_id_var: ContextVar[str | None] = ContextVar("truthpixel_tenant_id", default=None)
+_usage_summary_var: ContextVar[dict | None] = ContextVar("truthpixel_usage_summary", default=None)
 
 
 def ensure_trace_id(existing: str | None = None) -> str:
@@ -34,6 +35,7 @@ def clear_context() -> None:
     _trace_id_var.set(None)
     _claim_id_var.set(None)
     _tenant_id_var.set(None)
+    _usage_summary_var.set(None)
 
 
 def context_fields() -> dict[str, str]:
@@ -50,6 +52,96 @@ def context_fields() -> dict[str, str]:
     return fields
 
 
+def _fresh_usage_summary() -> dict:
+    return {
+        "total_external_requests": 0,
+        "failed_external_requests": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "estimated_cost_usd": 0.0,
+        "providers": {},
+    }
+
+
+def record_external_usage(
+    *,
+    provider: str,
+    operation: str,
+    model: str = "",
+    request_count: int = 1,
+    failed: bool = False,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    estimated_cost_usd: float = 0.0,
+) -> None:
+    summary = _usage_summary_var.get()
+    if summary is None:
+        summary = _fresh_usage_summary()
+        _usage_summary_var.set(summary)
+
+    summary["total_external_requests"] += max(0, int(request_count))
+    summary["failed_external_requests"] += max(0, int(request_count)) if failed else 0
+    summary["total_input_tokens"] += max(0, int(input_tokens))
+    summary["total_output_tokens"] += max(0, int(output_tokens))
+    summary["estimated_cost_usd"] = round(
+        float(summary["estimated_cost_usd"]) + max(0.0, float(estimated_cost_usd)),
+        8,
+    )
+
+    provider_bucket = summary["providers"].setdefault(
+        provider,
+        {
+            "requests": 0,
+            "failed_requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "operations": {},
+            "models": [],
+        },
+    )
+    provider_bucket["requests"] += max(0, int(request_count))
+    provider_bucket["failed_requests"] += max(0, int(request_count)) if failed else 0
+    provider_bucket["input_tokens"] += max(0, int(input_tokens))
+    provider_bucket["output_tokens"] += max(0, int(output_tokens))
+    provider_bucket["estimated_cost_usd"] = round(
+        float(provider_bucket["estimated_cost_usd"]) + max(0.0, float(estimated_cost_usd)),
+        8,
+    )
+    provider_bucket["operations"][operation] = provider_bucket["operations"].get(operation, 0) + max(
+        0, int(request_count)
+    )
+    if model and model not in provider_bucket["models"]:
+        provider_bucket["models"].append(model)
+
+
+def usage_summary_fields() -> dict:
+    summary = _usage_summary_var.get() or _fresh_usage_summary()
+    providers: dict[str, dict] = {}
+    for name, payload in summary["providers"].items():
+        providers[name] = {
+            "requests": payload["requests"],
+            "failed_requests": payload["failed_requests"],
+            "input_tokens": payload["input_tokens"],
+            "output_tokens": payload["output_tokens"],
+            "estimated_cost_usd": round(float(payload["estimated_cost_usd"]), 8),
+            "operations": dict(sorted(payload["operations"].items())),
+            "models": sorted(payload["models"]),
+        }
+    return {
+        "total_external_requests": summary["total_external_requests"],
+        "failed_external_requests": summary["failed_external_requests"],
+        "total_input_tokens": summary["total_input_tokens"],
+        "total_output_tokens": summary["total_output_tokens"],
+        "estimated_cost_usd": round(float(summary["estimated_cost_usd"]), 8),
+        "providers": dict(sorted(providers.items())),
+    }
+
+
 def log_event(logger: logging.Logger, event: str, **fields) -> None:
     payload = {"event": event, **context_fields(), **fields}
     logger.info(json.dumps(payload, sort_keys=True, default=str))
+
+
+def log_usage_summary(logger: logging.Logger, event: str = "claim_usage_summary", **fields) -> None:
+    log_event(logger, event, **usage_summary_fields(), **fields)

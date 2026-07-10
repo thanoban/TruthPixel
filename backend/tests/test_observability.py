@@ -9,7 +9,14 @@ from app.artifacts import reset_artifact_store_state
 from app.config import get_settings
 from app.jobs import reset_job_state
 from app.main import app
-from app.observability import TRACE_HEADER
+from app.observability import (
+    TRACE_HEADER,
+    bind_claim_context,
+    clear_context,
+    ensure_trace_id,
+    record_external_usage,
+    usage_summary_fields,
+)
 from app.storage import reset_storage_state
 from app.trufor import TruForResult
 
@@ -52,6 +59,44 @@ def test_health_echoes_trace_header(caplog):
     assert request_completed["trace_id"] == "trace-health-123"
     assert request_completed["path"] == "/health"
     assert request_completed["status_code"] == 200
+
+
+def test_usage_summary_aggregates_providers_and_tokens():
+    clear_context()
+    ensure_trace_id("trace-usage-123")
+    bind_claim_context(claim_id="claim-usage-1", tenant_id="tenant-usage")
+    record_external_usage(
+        provider="hf_inference",
+        operation="l1_member_query",
+        model="modelA",
+    )
+    record_external_usage(
+        provider="hf_inference",
+        operation="l1_member_query",
+        model="modelB",
+        failed=True,
+    )
+    record_external_usage(
+        provider="vertex_ai",
+        operation="semantic_inspector",
+        model="gemini-2.0-flash",
+        input_tokens=120,
+        output_tokens=45,
+        estimated_cost_usd=0.0012,
+    )
+
+    summary = usage_summary_fields()
+
+    assert summary["total_external_requests"] == 3
+    assert summary["failed_external_requests"] == 1
+    assert summary["total_input_tokens"] == 120
+    assert summary["total_output_tokens"] == 45
+    assert summary["estimated_cost_usd"] == 0.0012
+    assert summary["providers"]["hf_inference"]["requests"] == 2
+    assert summary["providers"]["hf_inference"]["failed_requests"] == 1
+    assert summary["providers"]["vertex_ai"]["input_tokens"] == 120
+    assert summary["providers"]["vertex_ai"]["models"] == ["gemini-2.0-flash"]
+    clear_context()
 
 
 def test_claim_sync_logs_lifecycle_with_trace(caplog, monkeypatch, tmp_path):
@@ -97,6 +142,7 @@ def test_claim_sync_logs_lifecycle_with_trace(caplog, monkeypatch, tmp_path):
     events = parse_json_logs(caplog, "app.main")
     sync_started = next(event for event in events if event["event"] == "claim_sync_started")
     sync_completed = next(event for event in events if event["event"] == "claim_sync_completed")
+    usage_summary = next(event for event in events if event["event"] == "claim_usage_summary")
     request_completed = next(event for event in events if event["event"] == "request_completed")
 
     assert sync_started["trace_id"] == "trace-sync-456"
@@ -105,6 +151,9 @@ def test_claim_sync_logs_lifecycle_with_trace(caplog, monkeypatch, tmp_path):
     assert sync_started["claim_id"] == claim_id
     assert sync_completed["claim_id"] == claim_id
     assert sync_completed["signal_count"] == 5
+    assert usage_summary["trace_id"] == "trace-sync-456"
+    assert usage_summary["claim_id"] == claim_id
+    assert usage_summary["total_external_requests"] == 0
     assert request_completed["path"] == "/v1/claims"
     assert response.headers[TRACE_HEADER] == "trace-sync-456"
 
@@ -182,6 +231,7 @@ def test_async_claim_logs_worker_lifecycle(caplog, monkeypatch, tmp_path):
     eager_dispatch = next(event for event in jobs_events if event["event"] == "claim_job_eager_dispatch")
     job_started = next(event for event in jobs_events if event["event"] == "claim_job_started")
     job_completed = next(event for event in jobs_events if event["event"] == "claim_job_completed")
+    usage_summary = next(event for event in jobs_events if event["event"] == "claim_usage_summary")
     webhook_dispatched = next(
         event for event in jobs_events if event["event"] == "claim_webhook_dispatched"
     )
@@ -190,10 +240,16 @@ def test_async_claim_logs_worker_lifecycle(caplog, monkeypatch, tmp_path):
     assert async_accepted["trace_id"] == "trace-async-789"
     assert async_enqueued["claim_id"] == claim_id
     assert async_accepted["claim_id"] == claim_id
+    assert eager_dispatch["trace_id"] == "trace-async-789"
+    assert job_started["trace_id"] == "trace-async-789"
+    assert job_completed["trace_id"] == "trace-async-789"
+    assert usage_summary["trace_id"] == "trace-async-789"
     assert eager_dispatch["claim_id"] == claim_id
     assert job_started["claim_id"] == claim_id
     assert job_completed["claim_id"] == claim_id
     assert job_completed["signal_count"] == 5
+    assert usage_summary["claim_id"] == claim_id
+    assert usage_summary["total_external_requests"] == 0
     assert webhook_dispatched["claim_id"] == claim_id
     assert webhook_calls[0][0] == "https://example.com/webhook"
 

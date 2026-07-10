@@ -24,6 +24,8 @@ from statistics import pstdev
 
 import httpx
 
+from .observability import record_external_usage
+
 HF_INFERENCE_BASE = "https://api-inference.huggingface.co/models"
 
 # Keyword → class. Matched against lowercased label substrings so heterogeneous model
@@ -122,6 +124,12 @@ async def _query_member(
         )
         response.raise_for_status()
     except httpx.HTTPError as exc:
+        record_external_usage(
+            provider="hf_inference",
+            operation="l1_member_query",
+            model=model,
+            failed=True,
+        )
         return MemberResult(model=model, error=f"{type(exc).__name__}: {exc}")
 
     try:
@@ -131,13 +139,32 @@ async def _query_member(
 
     # A cold model returns {"error": "...", "estimated_time": N} instead of a list.
     if isinstance(payload, dict) and payload.get("error"):
+        record_external_usage(
+            provider="hf_inference",
+            operation="l1_member_query",
+            model=model,
+            failed=True,
+        )
         return MemberResult(model=model, error=str(payload["error"]))
     if not isinstance(payload, list):
+        record_external_usage(
+            provider="hf_inference",
+            operation="l1_member_query",
+            model=model,
+            failed=True,
+        )
         return MemberResult(model=model, error="unexpected response shape (not a list)")
 
     probability = ai_probability_from_predictions(payload)
     if probability is None:
+        record_external_usage(
+            provider="hf_inference",
+            operation="l1_member_query",
+            model=model,
+            failed=True,
+        )
         return MemberResult(model=model, error="no mappable AI/real label", raw=payload)
+    record_external_usage(provider="hf_inference", operation="l1_member_query", model=model)
     return MemberResult(model=model, ai_probability=probability, raw=payload)
 
 

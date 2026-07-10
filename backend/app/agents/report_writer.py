@@ -7,7 +7,7 @@ pipeline always produces a readable report.
 from langchain_core.messages import HumanMessage
 
 from ..schemas import AgentFinding, FusionResult, SignalResult
-from .llm import get_vision_llm
+from .llm import get_vision_llm, record_vertex_usage
 
 PROMPT_TEMPLATE = """Write a concise fraud-review summary (max 120 words) for a human
 reviewer of an e-commerce return claim. Plain language, lead with the overall risk,
@@ -50,6 +50,12 @@ async def write_report(
     )
     try:
         response = await llm.ainvoke([HumanMessage(content=prompt)])
+        record_vertex_usage(
+            operation="report_writer",
+            model_name=llm.model_name,
+            prompt_text=prompt,
+            response=response,
+        )
         return str(response.content).strip()
     except Exception:  # noqa: BLE001 — report generation must never fail the pipeline
         return _template_report(fusion, signals, agents)

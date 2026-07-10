@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     google_cloud_project: str = ""
     google_cloud_location: str = "us-central1"
     vertex_model: str = "gemini-2.0-flash"
+    vertex_input_cost_per_1m_tokens: float = 0.0
+    vertex_output_cost_per_1m_tokens: float = 0.0
     agent_pass_enabled: bool = True
     # Agents run only when preliminary risk is inside (low, high) — i.e. uncertain —
     # or when recapture is flagged. High-confidence clean/fraud skips the LLM pass.
