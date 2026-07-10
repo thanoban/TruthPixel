@@ -22,6 +22,7 @@ final call.
 | [docs/AGENTS.md](docs/AGENTS.md) | LangGraph multi-agent system (Gemini on Vertex AI), cost gating |
 | [docs/USE_CASES.md](docs/USE_CASES.md) | Product surfaces (API / reviewer dashboard / public webapp) and use cases beyond return fraud |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 0–2 checklists and standing decisions |
+| [docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md) | Current development block: forensic-grade accuracy, multi-agent automation, pilot readiness — sequenced |
 | [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | Full-system audit log — bugs found/fixed, finished vs. remaining, dated newest-first |
 
 ## The five signal layers
@@ -128,6 +129,15 @@ Service (Linux, container) or Container Apps revision at it. Set the same keys f
 pointing at the checkpoint baked into the image (`./models/l1_clip_head.pt`). First request
 after a cold start pulls the CLIP encoder weights (~1.3GB) if not already cached in the image
 layer — consider a startup health-check warm-up hit before routing real traffic.
+
+**CI/CD (GitHub Actions):** `.github/workflows/backend-ci.yml` runs the test suite on every
+push/PR touching `backend/`. `.github/workflows/backend-deploy.yml` builds `backend/Dockerfile`
+and publishes it to GitHub Container Registry on every push to `main` (needs no setup — uses
+the built-in `GITHUB_TOKEN`); it then deploys to an Azure Web App **only if** the
+`AZURE_WEBAPP_NAME`/`AZURE_WEBAPP_PUBLISH_PROFILE` repo secrets are set — config-gated the same
+way L1/L2/L3/Vertex are elsewhere in this repo, so the workflow stays green with no Azure
+resource provisioned yet. One-time setup steps for the Azure step are documented in the
+workflow file's header comment.
 
 ## Layer 1 training scaffold
 

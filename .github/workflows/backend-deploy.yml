@@ -1,0 +1,72 @@
+name: Backend Deploy
+
+# Build the backend image on every push to main, always publish it to GitHub Container
+# Registry (needs no extra setup -- uses the built-in GITHUB_TOKEN), then deploy to Azure Web
+# App for Containers IF the required secrets are present. The Azure step is intentionally
+# config-gated rather than required, matching this repo's pattern elsewhere (L1/L2/L3/Vertex
+# all fall back gracefully when unconfigured) -- until an App Service is actually provisioned
+# and its publish profile added as a secret, this workflow still runs green and just skips
+# that step.
+#
+# One-time setup to enable the Azure deploy step:
+#   1. Create an Azure Web App (Linux, Container) -- e.g. via the portal or
+#      `az webapp create --resource-group <rg> --plan <plan> --name <app-name> --deployment-container-image-name ghcr.io/thanoban/truthpixel-backend:latest`
+#   2. Download its publish profile (Azure Portal -> the Web App -> "Download publish profile",
+#      or `az webapp deployment list-publishing-profiles`)
+#   3. Add two repo secrets (Settings -> Secrets and variables -> Actions):
+#      - AZURE_WEBAPP_NAME: the App Service name from step 1
+#      - AZURE_WEBAPP_PUBLISH_PROFILE: the full XML contents from step 2
+#   4. Also set the app's runtime environment variables (Application Settings) to match
+#      backend/.env.example's keys -- the image ships with no .env baked in by design.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/truthpixel-backend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: meta
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          docker build -f backend/Dockerfile -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  deploy-azure:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: ${{ secrets.AZURE_WEBAPP_NAME != '' }}
+    steps:
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: ${{ needs.build-and-push.outputs.image }}
