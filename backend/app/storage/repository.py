@@ -30,7 +30,6 @@ from .models import (
     ApiKeyRecord,
     ArtifactRecord,
     AuditEventRecord,
-    Base,
     ClaimRecord,
     RateLimitEventRecord,
     TenantRecord,
@@ -66,8 +65,27 @@ def reset_storage_state() -> None:
         engine.dispose()
 
 
+def _run_alembic_upgrade() -> None:
+    """Run migrations up to head via Alembic (backend/alembic/) instead of the old
+    Base.metadata.create_all()-only approach, which created missing tables but never
+    altered existing ones — see backend/alembic/versions/0001_baseline_schema.py for the
+    incident that motivated switching to a real migration framework (docs/CORRECTIONS.md
+    2026-07-09/10). Alembic's env.py reads DATABASE_URL from get_settings() itself, so this
+    always targets whatever DB the app/tests are currently configured for.
+    """
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    backend_root = Path(__file__).resolve().parent.parent.parent
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    command.upgrade(cfg, "head")
+
+
 def init_db() -> None:
-    Base.metadata.create_all(bind=get_engine())
+    _run_alembic_upgrade()
 
 
 @contextmanager

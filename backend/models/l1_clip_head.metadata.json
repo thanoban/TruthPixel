@@ -1,0 +1,53 @@
+{
+  "encoder": {
+    "model_name": "ViT-L-14",
+    "pretrained": "openai",
+    "embedding_dim": 768,
+    "device": "cuda"
+  },
+  "head": {
+    "hidden_dim": 512,
+    "dropout": 0.2,
+    "use_mlp": true
+  },
+  "heldout_generators": [
+    "flux",
+    "midjourney",
+    "sdxl"
+  ],
+  "split_summary": {
+    "train": {
+      "total": 9589,
+      "real": 4790,
+      "generated": 4799
+    },
+    "val": {
+      "total": 1235,
+      "real": 607,
+      "generated": 628
+    },
+    "test": {
+      "total": 1201,
+      "real": 603,
+      "generated": 598
+    }
+  },
+  "format_version": 1,
+  "notes": "Phase-0 L1 CLIP-head scaffold trained via frozen image encoder.",
+  "training": {
+    "epochs": 5,
+    "batch_size": 32,
+    "learning_rate": 0.0001,
+    "val_fraction": 0.1,
+    "test_fraction": 0.1,
+    "linear_probe": false,
+    "data_root": "/kaggle/working/data/l1_aigen",
+    "output_dir": "/kaggle/working/checkpoints/l1_aigen/run_20260710_0737"
+  },
+  "history_summary": {
+    "epochs_completed": 5,
+    "best_val_accuracy": 0.8907,
+    "final_train_accuracy": 0.8904,
+    "final_val_accuracy": 0.8891
+  }
+}

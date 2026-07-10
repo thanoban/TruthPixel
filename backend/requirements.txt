@@ -9,6 +9,7 @@ torch>=2.4
 torchvision>=0.19
 open_clip_torch>=2.26
 sqlalchemy>=2.0
+alembic>=1.13
 psycopg[binary]>=3.2
 boto3>=1.39
 celery>=5.4

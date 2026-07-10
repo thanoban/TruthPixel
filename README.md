@@ -18,6 +18,7 @@ final call.
 | [docs/COMPETITORS.md](docs/COMPETITORS.md) | Full landscape — tools, models, APIs, datasets, our stance on each |
 | [docs/ML_PLAN.md](docs/ML_PLAN.md) | What we train, screenshot augmentation, honest evaluation protocol |
 | [docs/COLAB_TRAINING.md](docs/COLAB_TRAINING.md) | No local GPU: train the L1 head on Colab, all data/checkpoints in Google Drive |
+| [docs/KAGGLE_TRAINING.md](docs/KAGGLE_TRAINING.md) | Same, on Kaggle's free GPU tier instead (use if Colab's quota runs out) |
 | [docs/AGENTS.md](docs/AGENTS.md) | LangGraph multi-agent system (Gemini on Vertex AI), cost gating |
 | [docs/USE_CASES.md](docs/USE_CASES.md) | Product surfaces (API / reviewer dashboard / public webapp) and use cases beyond return fraud |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 0–2 checklists and standing decisions |
@@ -57,8 +58,9 @@ status.
 
 ```bash
 # 1. Backend API — SQLite DB + local-disk artifact storage are created automatically
-#    on first run (no external services required). L1 has a local-checkpoint path plus
-#    an HF-ensemble path; L2 has a TruFor adapter. Both fall back safely when unconfigured.
+#    on first run via Alembic migrations (no external services, no manual `alembic upgrade`
+#    needed — init_db() runs it for you). L1 has a local-checkpoint path plus an HF-ensemble
+#    path; L2 has a TruFor adapter. Both fall back safely when unconfigured.
 cd backend
 python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -95,6 +97,13 @@ one service in docker-compose not wired into any code path yet (see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6). L1 still needs either `HF_API_TOKEN` (HF
 ensemble) or `L1_MODEL_PATH` (local checkpoint), and L2 still needs the external TruFor repo
 and weights to stop falling back to its neutral path.
+
+**Schema changes** go through Alembic (`backend/alembic/`), not `Base.metadata.create_all()`
+directly — `init_db()` runs `alembic upgrade head` automatically on every startup (fast no-op
+once a DB is current). For a manual check or CLI migration work: `cd backend && alembic current`
+/ `alembic upgrade head` (reads `DATABASE_URL` from the same `.env`/environment as the app).
+New schema changes should be a real migration (`alembic revision --autogenerate -m "..."`,
+reviewed before committing), not another ad-hoc column patch.
 
 ## Layer 1 training scaffold
 

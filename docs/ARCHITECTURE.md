@@ -93,7 +93,7 @@ Concrete mitigations baked into the system:
 | L2 | Manipulation / edit forensics | TruFor (pretrained) for forgery localization + heatmap; CAT-Net/MVSS-Net as alternates | **Buy (pretrained inference)** | TruFor adapter + heatmap artifact persistence are wired; still stubbed until external repo/weights are configured |
 | L3 | Recapture / screenshot | Sightengine Recapture API (day 1) → custom moiré/screen-artifact CNN (later) | **Buy → Build** | The screenshot-fraud answer |
 | L4 | Metadata & provenance | exiftool + piexif (EXIF), c2patool/c2pa-python (C2PA), SynthID check | **Buy (libs/CLIs)** | Neutral-weight signal only |
-| L5 | E-commerce context cross-check | **v0 (shipped):** perceptual-hash + color-histogram similarity vs listing photos, plus a direct DB scan against recent claims for reused-photo detection. **v1 (target):** DINOv2/OpenCLIP embeddings + Qdrant ANN search; external reverse-image search (TinEye/SerpAPI) for photos stolen from *outside* our own system; lighting/shadow consistency | **Build (our moat)** | v0 lives in `backend/app/context_checks.py` — no public dataset, we build the seller-listing↔claim pair data for v1 |
+| L5 | E-commerce context cross-check | **v0 (shipped):** perceptual-hash + color-histogram similarity. **v1 (shipped):** blends in a frozen-CLIP (ViT-B-32) embedding cosine similarity — no training, pure inference; degrades to v0-only automatically if unavailable. **v2 (target):** Qdrant ANN search (once linear-scan-over-recent-claims stops scaling); external reverse-image search (TinEye/SerpAPI) for photos stolen from *outside* our own system; lighting/shadow consistency | **Build (our moat)** | v0+v1 live in `backend/app/context_checks.py` + `embeddings.py` — no public dataset, we build the seller-listing↔claim pair data for v2 |
 
 **Scope discipline:** we train *one* head (L1) and *one* small recapture model (L3, later
 phase). Everything else is pretrained inference or third-party libs. That keeps compute and
@@ -187,8 +187,9 @@ LangGraph orchestrator (state graph)
    │    ├─ L2 forensics   (serverless GPU: TruFor)
    │    ├─ L3 recapture   (Sightengine API — shipped)
    │    ├─ L4 metadata    (CPU: EXIF + c2patool — shipped)
-   │    └─ L5 context     (v0 shipped: hash+histogram vs listing/recent-claims;
-   │                       v1 target: DINOv2 embed → Qdrant search + reverse-image API)
+   │    └─ L5 context     (v0+v1 shipped: hash+histogram blended with frozen-CLIP embed
+   │                       cosine similarity, vs listing/recent-claims; v2 target: Qdrant
+   │                       ANN search + external reverse-image API)
    │
    ├─ conditional routing:
    │    high-confidence clean ──────────────► skip agents (save credits)
@@ -295,6 +296,7 @@ Full checklists in [ROADMAP.md](ROADMAP.md).
 
 ```
 backend/
+  alembic.ini, alembic/   # schema migrations (see §9a) — init_db() runs `upgrade head`
   app/
     main.py            # FastAPI: sync + async claims, status, decision, audit, artifacts, /health
     config.py          # pydantic-settings; DB/storage/queue/Vertex/gating/threshold env
@@ -305,12 +307,15 @@ backend/
                         #   L3 recapture, L4 metadata, L5 context: REAL
     agents/            # Gemini agents (semantic, plausibility, report) + stub fallback
     graph/build.py     # LangGraph: analyzers → gated agents → fusion → report
-    fusion/engine.py   # weighted fusion + screenshot-evasion combo rule
+    fusion/            # weighted fusion (default) + learned-model runtime scorer (opt-in)
     context_checks.py  # L5 v0: perceptual-hash + histogram image fingerprinting
+    embeddings.py      # L5 v1: frozen-CLIP embedding cosine similarity (no training)
+    hf_inference.py    # L1 v2: HF Inference API ensemble (no training, no GPU hosting)
+    observability.py   # trace-id/claim-id/tenant-id-scoped structured JSON logging
     storage/           # SQLAlchemy models + repository (claims, audit events, artifacts)
     artifacts.py       # local-disk / S3 artifact store
     jobs.py, celery_app.py  # async claim queue (Celery), webhook dispatch
-  tests/               # smoke, persistence, async-queue, recapture, context-analyzer tests
+  tests/               # smoke, persistence, async-queue, recapture, context-analyzer, migration tests
 ml/
   layer1_aigen/         # L1 dataset/augment/model/train/eval scaffold
   fusion/               # learned-fusion feature assembly + training/export helpers
@@ -321,6 +326,32 @@ docs/                  # this doc suite
 
 Not yet created: `scripts/`, `ml/recapture/`, and `ml/datagen/`. `dashboard/` and `ml/fusion/`
 now exist; the remaining gap is turning those scaffolds into deployed, model-backed flows.
+
+---
+
+## 9a. Schema migrations — Alembic, not `create_all()`
+
+Real bug, real fix (see [CORRECTIONS.md](CORRECTIONS.md) 2026-07-09/10): `init_db()` used to
+call `Base.metadata.create_all()` only, which creates missing tables but never alters
+existing ones — so any DB created before a column was added (e.g. `claims.tenant_id`, added
+when the auth/tenant feature landed) stayed permanently broken, throwing
+`OperationalError: no such column` on every query touching it, until someone manually
+deleted the file.
+
+`init_db()` now runs Alembic migrations to head (`backend/alembic/`) instead. The baseline
+migration (`0001_baseline_schema.py`) is deliberately idempotent — `create_all(checkfirst=True)`
+plus a missing-column backfill — so it can adopt Alembic on an already-drifted DB (any state
+between "predates auth" and "fully current") without forcing a drop-and-recreate. **Future
+schema changes should be normal migrations** (`alembic revision --autogenerate -m "..."`
+against a DB already at head, reviewed before committing), not more catch-up logic.
+
+One footgun worth remembering if this ever needs touching again: `env.py` deliberately does
+**not** call `logging.config.fileConfig()` against `alembic.ini`, even though that's the
+Alembic-generated default. That call reconfigures the *root* logger's handler list — since
+`init_db()` runs this on every app startup (not just standalone CLI invocations), it would
+silently strip whatever handler the app (or pytest's `caplog`) already installed on root.
+Found via a real test failure — app log events were still being emitted, `caplog` just
+stopped capturing them the moment migrations ran.
 
 ---
 

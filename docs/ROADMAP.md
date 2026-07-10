@@ -48,19 +48,34 @@ Remaining:
       **Operational note:** needs an HF token set; without it L1 falls back to stub.
 - [x] L1 wiring (local checkpoint): `l1_aigen.py` loads a trained CLIP-head via
       `L1_MODEL_PATH`/`L1_MODEL_DEVICE`, taking precedence over the HF ensemble when set
-- [ ] L1 own-model upgrade: train the screenshot-augmented CLIP-head on a GenImage subset
-      (`ml/layer1_aigen/`) — see [docs/COLAB_TRAINING.md](COLAB_TRAINING.md) (no local GPU:
-      Colab + Drive). This is the domain-tuned *upgrade* to the HF ensemble, not a blocker for
-      a working L1. No checkpoint trained/deployed yet.
+- [x] L1 own-model upgrade: **trained, deployed, and verified live (2026-07-10).** First real
+      checkpoint trained on Kaggle (`run_20260710_0737`, see
+      [docs/KAGGLE_TRAINING.md](KAGGLE_TRAINING.md)) — CIFAKE (3k/class) + DiffusionDB (3k) +
+      COCO real fallback (3k) + 25-prompt self-generated SDXL held-out bucket, 5 epochs.
+      **Held-out-generator headline metric (sdxl/midjourney/flux, unseen in training): 0.9688
+      AUROC / 0.8959 accuracy on `screenshot_sim`**, robustness matrix holds across all four
+      variants (0.9688–0.9728 AUROC). Val 0.8891 vs. train 0.8904 — no overfitting. Checkpoint
+      wired into `backend/models/l1_clip_head.pt` via `L1_MODEL_PATH`/`L1_MODEL_DEVICE=cpu` and
+      confirmed running through the live backend: `provider: local-clip-head`, real inference,
+      contributes as the top-weighted signal in the end-to-end demo (`scripts/demo.py`).
+      **Follow-up (not blocking):** CIFAKE is 32×32, so this is a bootstrap-scale run — a
+      larger/higher-res training set would raise the ceiling; and pre-warm the ViT-L/14 encoder
+      weights on any inference host (first load pulls ~1.3GB over the network).
 - [x] L2 real: TruFor subprocess inference (`backend/app/trufor.py`) + heatmap PNG artifact,
       gated on `l2_trufor_configured` (repo dir + model file set), stub fallback otherwise
 - [x] L3 real: Sightengine recapture API call (keys already templated in `.env.example`)
 - [x] L4: add c2patool subprocess check
 - [x] L5 real (v0): `context_checks.py` perceptual-hash + color-histogram similarity —
       listing-photo match/mismatch scoring, plus intra-system reused-photo detection by
-      scanning recent claim artifacts. **Not yet done:** DINOv2/Qdrant embeddings (better
-      matching) or TinEye/SerpAPI (catches photos stolen from *outside* our own claims DB) —
-      tracked as L5 v1 in Phase 1 below.
+      scanning recent claim artifacts.
+- [x] L5 real (v1, zero-training): `backend/app/embeddings.py` blends a frozen-CLIP
+      (ViT-B-32) embedding cosine similarity into the v0 score — pure inference, reuses the
+      `open_clip` loader L1's checkpoint path uses. Degrades to v0-only automatically when
+      torch/open_clip_torch aren't available or the model fails to load (never breaks L5).
+      Config: `L5_EMBEDDING_ENABLED`/`_MODEL`/`_PRETRAINED`/`_DEVICE`/`_WEIGHT`. Tests:
+      `test_embeddings.py`, `test_context_analyzer.py`. **Not yet done:** Qdrant ANN search
+      (only matters once claim volume makes the linear scan too slow) or TinEye/SerpAPI
+      (catches photos stolen from *outside* our own claims DB) — tracked as L5 v2 below.
 - [x] Async claim queue: `POST /v1/claims/async`, `GET /v1/claims/{id}/status`, webhook
       dispatch on completion (`backend/app/jobs.py`, `celery_app.py`) — **operational caveat:**
       needs a running Celery worker + Redis, or `CELERY_TASK_ALWAYS_EAGER=true` for local dev;
@@ -92,11 +107,56 @@ Remaining:
       setting it only in `.env` silently never took effect (and the failure was silently
       swallowed). Now reads `settings.fusion_model_path`, logs a warning on fallback. See
       [CORRECTIONS.md](CORRECTIONS.md) 2026-07-08.
-- [ ] Reviewer dashboard hardening: verify against a live API, finish auth/tenant flow, and
-      close UX gaps for production reviewers
-- [ ] Demo script: 5 curated images (real damage, SDXL fake, inpainted, screenshot-of-AI, reused photo)
+- [x] Dashboard auth: `dashboard/app/api.ts` now sends `X-API-Key` (from `NEXT_PUBLIC_API_KEY`)
+      when set; no-op otherwise, so the default `API_AUTH_ENABLED=false` path is unaffected.
+      `dashboard/.env.local.example` added. **Not yet done:** verified against a live
+      `API_AUTH_ENABLED=true` backend with a real issued key — only the default path was
+      exercised live. See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-09.
+- [x] Fixed: `init_db()` only ever called `Base.metadata.create_all()`, which creates missing
+      tables but never alters existing ones — so any SQLite DB created before a column (e.g.
+      `claims.tenant_id`) was added would 500 forever on every query touching it, found via
+      live browser verification of the dashboard-auth change above. Original fix was a
+      lightweight self-healing column-adder; **superseded 2026-07-10 by a real migration
+      framework** — see below.
+- [x] Real migration framework: `backend/alembic/` — `init_db()` now runs `alembic upgrade
+      head` instead of the ad-hoc column-adder, which is gone (its logic lives in the
+      idempotent baseline migration `0001_baseline_schema.py` instead). Future schema
+      changes are real, reviewed migrations (`alembic revision --autogenerate`), not more
+      runtime patching. Verified via CLI (`alembic current` → `0001 (head)`) and full suite
+      (63/63). Found and fixed a real footgun along the way: `env.py`'s Alembic-generated
+      default calls `logging.config.fileConfig()`, which resets the *root* logger's handler
+      list — since this runs on every app startup, it was silently breaking `caplog`-based
+      log-capture tests (and would break the app's own logging in production the same way).
+      See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-10.
+- [ ] Reviewer dashboard hardening: tenant switcher, production UX polish (auth header support
+      landed above)
+- [x] Demo script: `scripts/demo.py` — submits curated claims to a live backend, prints the
+      fused report. 2/5 cases (`screenshot_of_ai`, `reused_photo`) run reproducibly with no
+      external images (reuses `ml/layer1_aigen/augment.py`'s screenshot-sim); the other 3
+      (`real_damage`, `ai_fake`, `inpainted`) need real source images via CLI flags —
+      deliberately not fabricated procedurally (see script docstring). Running it live found
+      and fixed **three real bugs**: L5's reuse detection was dead code without listing URLs,
+      `L5_EMBEDDING_ENABLED` defaulting to `true` could hang a request (and inflated the full
+      test suite from ~20s to 431s) by attempting a network model download inline, and that
+      same embedding call blocked the whole event loop instead of running in a thread. All
+      fixed; see [CORRECTIONS.md](CORRECTIONS.md) 2026-07-10 (2).
+- [x] Fixed live via the demo script above: L5 reuse-photo detection now runs independent of
+      listing URLs, and `L5_EMBEDDING_ENABLED` now defaults to `false` (opt-in, matching
+      L1/L2/L3's pattern) with the embedding call properly backgrounded via `asyncio.to_thread`.
 
-**Exit criterion:** the screenshot-of-AI-image demo case is flagged with a correct explanation.
+**Exit criterion:** the screenshot-of-AI-image demo case is flagged with a correct explanation
+— **met**: `scripts/demo.py`'s `screenshot_of_ai` case is flagged (risk 0.80) in a live run
+against a real backend, with **L1 now a real trained checkpoint** (see the L1 own-model item
+above) contributing as the top-weighted signal (score 0.76, `provider: local-clip-head`) rather
+than a stub. L3 recapture is still a Sightengine stub in this environment, so the "screenshot"
+half of the explanation still leans on L5 reuse-match rather than genuine recapture-artifact
+detection; wiring Sightengine keys (or training T3) would complete that. The L1/AI-generation
+half of the explanation is now genuinely model-driven. **Caveat on demo numbers:** the 3
+reproducible cases run against a plain placeholder image (no real photo/AI-fake supplied), so
+L1's 0.76 there proves the *wiring and fusion contribution*, not discrimination — for a
+meaningful real-vs-AI accuracy demonstration, run `scripts/demo.py --real-damage <photo>
+--ai-fake <ai-image>` with genuine source images (the held-out 0.9688 AUROC is the real
+accuracy number; see KAGGLE_TRAINING.md).
 
 ## Phase 1 — Real product (target: +2–3 months)
 
@@ -107,7 +167,9 @@ Celery worker still applies.)
 - [x] Persistence foundation: database-backed claims, signals, reviewer decisions, and audit log
 - [x] Object storage: local/S3-compatible claim images + heatmaps
 - [x] Learned-fusion tooling scaffold: `ml/fusion/features.py` + `ml/fusion/train_meta.py`
-- [ ] L5 v1: replace v0 hash/histogram with DINOv2/OpenCLIP embeddings + Qdrant ANN search; add external reverse-image search (TinEye/SerpAPI) for photos stolen from outside our own claims DB
+- [ ] L5 v2: Qdrant ANN search to replace the linear scan over `L5_RECENT_CLAIM_WINDOW`; add
+      external reverse-image search (TinEye/SerpAPI) for photos stolen from outside our own
+      claims DB (v1 — embedding blend — landed in Phase 0, see above)
 - [x] Public webapp: anonymous submission path (IP rate-limited via `PUBLIC_SUBMISSION_ENABLED`,
       see Phase 0 above). **Still not done:** image-retention policy stated on the page itself,
       optional free API-key signup for higher usage (see USE_CASES.md §3)

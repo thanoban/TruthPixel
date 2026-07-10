@@ -8,6 +8,10 @@ import type {
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Reviewer auth: set NEXT_PUBLIC_API_KEY when the backend has API_AUTH_ENABLED=true.
+// Unset by default, matching the backend's local-dev bypass — see dashboard/README.md.
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
 async function parseError(response: Response): Promise<string> {
   try {
     const payload = await response.json();
@@ -23,6 +27,7 @@ export async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> 
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
       ...(init?.headers || {}),
     },
     cache: "no-store",

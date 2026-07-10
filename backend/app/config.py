@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     listing_fetch_timeout_seconds: float = 8.0
     listing_max_images: int = 5
     l5_recent_claim_window: int = 40
+    # L5 v1: blend a frozen-CLIP embedding cosine similarity into the v0 hash+histogram
+    # score. No training — pure inference, same open_clip loader as L1's checkpoint path.
+    # ViT-B-32 (not L1's default ViT-L-14) — cheaper, similarity doesn't need the bigger model.
+    # Defaults OFF, matching L1/L2/L3's opt-in-only pattern: found live (a real ~7-minute
+    # test-suite run and a hung demo request) that first use triggers a real network
+    # download of the model weights, which can stall indefinitely on a slow/offline
+    # connection — see docs/CORRECTIONS.md. Opt in once weights are pre-warmed locally.
+    l5_embedding_enabled: bool = False
+    l5_embedding_model: str = "ViT-B-32"
+    l5_embedding_pretrained: str = "openai"
+    l5_embedding_device: str = "cpu"
+    l5_embedding_weight: float = 0.5
     l1_model_path: str = ""
     l1_model_device: str = "auto"
     # L1 HF Inference API ensemble (zero-training path). When no local checkpoint is set
