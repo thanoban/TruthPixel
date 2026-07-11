@@ -118,26 +118,42 @@ docker build -f backend/Dockerfile -t truthpixel-backend .
 docker run -p 8000:8000 --env-file backend/.env truthpixel-backend
 ```
 
-**On Azure** (App Service / Container Apps, targeting Azure-for-Students credits — hosting
-only, not training compute; see [docs/ML_PLAN.md](docs/ML_PLAN.md) §6 for why training itself
-stays on free Colab/Kaggle): push the image to Azure Container Registry, then point an App
-Service (Linux, container) or Container Apps revision at it. Set the same keys from
-`.env.example` as Application Settings / environment variables — at minimum `DATABASE_URL`
-(Azure Database for PostgreSQL, or leave as SQLite for a single-instance low-volume deploy),
-`STORAGE_BACKEND=s3` with an S3-compatible endpoint or Azure Blob via a custom storage backend
-(not yet implemented — `local`/`s3` are the two working options today), and `L1_MODEL_PATH`
-pointing at the checkpoint baked into the image (`./models/l1_clip_head.pt`). First request
-after a cold start pulls the CLIP encoder weights (~1.3GB) if not already cached in the image
-layer — consider a startup health-check warm-up hit before routing real traffic.
+**On GCP Cloud Run** (same project as Vertex AI, see [docs/AGENTS.md](docs/AGENTS.md) — the
+GenAI App Builder credit is Vertex-API-scoped only and does **not** cover Cloud Run hosting;
+Cloud Run's own perpetual free tier, 2M requests/mo and 180k vCPU-seconds/mo, comfortably
+covers a low-volume pilot regardless): push the image to Artifact Registry, then
+`gcloud run deploy --port 8000` (explicit `--port` matters — see the Dockerfile's comment on
+why the container isn't on Cloud Run's default 8080). Set the same keys from `.env.example` as
+Cloud Run environment variables — at minimum `DATABASE_URL` pointing at a **Supabase Postgres**
+pooler connection string (see `.env.example`'s commented example — must use the
+`postgresql+psycopg://` driver prefix and Supabase's port `6543` pooler, not the direct port,
+since Cloud Run can scale to many concurrent instances each opening a DB connection),
+`STORAGE_BACKEND=s3` with an S3-compatible endpoint (not yet implemented as GCS-native — `local`
+and `s3` are the two working options today), and `L1_MODEL_PATH` pointing at the checkpoint
+baked into the image (`./models/l1_clip_head.pt`). First request after a cold start pulls the
+CLIP encoder weights (~1.3GB) if not already cached in the image layer — consider a startup
+health-check warm-up hit before routing real traffic.
+
+**Database — SQLite locally, Supabase Postgres in production.** SQLite is the zero-setup local
+default and needs nothing changed. In production it's disqualifying, not just non-ideal: Cloud
+Run's filesystem is ephemeral, so a SQLite file is wiped on every restart/redeploy, silently
+losing the entire claims/audit trail. Supabase was chosen over a GCP-native Cloud SQL instance
+for this project's stage — genuine free tier, zero infra provisioning (just a connection
+string), and built-in pgvector that can later replace the standalone Qdrant service tracked in
+[docs/ROADMAP.md](docs/ROADMAP.md)'s L5 v2 item. No backend code changes are needed for either
+DB — `backend/app/storage/repository.py` and `backend/alembic/env.py` both read the single
+`DATABASE_URL` setting, so Alembic creates the full schema automatically on first boot against
+whichever DB is configured.
 
 **CI/CD (GitHub Actions):** `.github/workflows/backend-ci.yml` runs the test suite on every
 push/PR touching `backend/`. `.github/workflows/backend-deploy.yml` builds `backend/Dockerfile`
 and publishes it to GitHub Container Registry on every push to `main` (needs no setup — uses
-the built-in `GITHUB_TOKEN`); it then deploys to an Azure Web App **only if** the
-`AZURE_WEBAPP_NAME`/`AZURE_WEBAPP_PUBLISH_PROFILE` repo secrets are set — config-gated the same
-way L1/L2/L3/Vertex are elsewhere in this repo, so the workflow stays green with no Azure
-resource provisioned yet. One-time setup steps for the Azure step are documented in the
-workflow file's header comment.
+the built-in `GITHUB_TOKEN`, and validates the Docker build regardless of GCP config); it then
+deploys to Cloud Run **only if** the required `GCP_*`/`CLOUD_RUN_SERVICE_NAME` repo secrets are
+set — config-gated the same way L1/L2/L3/Vertex are elsewhere in this repo, so the workflow
+stays green with nothing provisioned yet. Auth uses Workload Identity Federation (keyless,
+short-lived tokens, not a long-lived JSON key) — full one-time `gcloud` setup steps are
+documented in the workflow file's header comment.
 
 ## Layer 1 training scaffold
 

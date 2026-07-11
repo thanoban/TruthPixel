@@ -4,6 +4,42 @@
 > an honest finished-vs-remaining snapshot. Each entry is dated; newest first. This is an audit
 > trail, not a plan — see [ROADMAP.md](ROADMAP.md) for the phase-by-phase plan itself.
 
+## 2026-07-10 (4) — full-system audit: test suite is currently broken, found live
+
+Ran the full backend suite fresh (not from memory) as part of a "what hasn't been built"
+analysis. Result: **8 failures, 136s instead of the normal ~20s** (was 55-57/57 passing as
+of entry (2)/(3) below).
+
+**Root cause, confirmed by running failing tests individually:** the tests aren't isolated
+from `backend/.env`. Since the Vertex-agents-live and L1-checkpoint-live work landed
+(entries (2)/(3) below), `backend/.env` carries real `GOOGLE_CLOUD_PROJECT` and
+`L1_MODEL_PATH` values. Tests that assume "stub mode" (no external calls) don't override
+these, so they now load the real ~1.3GB CLIP checkpoint and make real Vertex AI calls —
+confirmed via `open_clip.factory` warnings and live `ChatVertexAI` construction in the
+captured output. Individually, `test_pipeline.py::test_graph_runs_end_to_end_in_stub_mode`
+(35s) and `test_persistence_api.py::test_claim_persistence_and_review_flow` (43s) both pass
+but take 35-43s each instead of near-instant; run together in the full suite, the resulting
+resource/network contention causes 8 tests to fail (`test_auth_api_keys.py` rate-limit
+tests, `test_observability.py`'s two log-capture tests, `test_persistence_api.py`,
+`test_pipeline.py`'s two "stub mode" tests).
+
+**Not yet fixed — this entry is the finding, not the fix.** The correct fix is test
+environment isolation: force `GOOGLE_CLOUD_PROJECT`/`L1_MODEL_PATH` (and any other
+"external" setting) unset/stubbed for the test session regardless of what `backend/.env`
+contains — e.g. a `conftest.py` fixture or a separate `backend/.env.test`, rather than
+relying on individual tests to remember to monkeypatch. **This is now the most urgent item**
+in ROADMAP.md's remaining list: `.github/workflows/backend-ci.yml` (added in entry after
+(3), see git log) would fail on push in its current state, since CI has no reason to differ
+from this environment's `.env`-driven behavior.
+
+**Also confirmed live in this pass (not new bugs — re-verified state):**
+`backend/app/forensics_classic.py` (ELA + noise-inconsistency + JPEG-ghost, drafted in the
+session that produced entry (3)'s "Vertex agents" work) is **still not wired into
+`l2_forensics.py`** — `grep -n "forensics_classic" app/analyzers/l2_forensics.py` returns
+no match. L2 is still effectively a stub outside of TruFor. `ml/datagen/` does not exist.
+No `FUSION_MODEL_PATH` is set (fusion still hand-weighted). See ROADMAP.md's updated
+remaining list and `EXECUTION_PLAN.md` A1/A4/A5 for what closes each of these.
+
 ## 2026-07-10 (3) — Vertex AI agents wired live; two real bugs found and fixed
 
 Wired `GOOGLE_CLOUD_PROJECT` to a real GCP project (EduFX, GenAI App Builder credit scope —

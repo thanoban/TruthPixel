@@ -3,9 +3,14 @@
 #   docker build -f backend/Dockerfile -t truthpixel-backend .
 #
 # CPU-only torch/torchvision wheels are used deliberately — the CUDA build is several GB
-# larger and this image targets CPU inference hosts (Azure App Service / Container Apps
-# without a GPU SKU). See ML_PLAN.md §6 for the GPU-inference plan (Modal/RunPod) if that
+# larger and this image targets CPU inference hosts (GCP Cloud Run has no GPU SKU in the
+# tier this project uses). See ML_PLAN.md §6 for the GPU-inference plan (Modal/RunPod) if that
 # ever changes.
+#
+# Port: EXPOSE/CMD stay on 8000 deliberately, not Cloud Run's default 8080 -- Cloud Run is told
+# which port to route to via `gcloud run deploy --port 8000` (see backend-deploy.yml), so the
+# container does NOT need to read $PORT dynamically. Don't "fix" this to 8080 later assuming
+# Cloud Run's convention applies unconditionally -- it doesn't when --port is set explicitly.
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,6 +42,6 @@ COPY backend/models ./models
 EXPOSE 8000
 
 # No .env is copied into the image — configuration is injected via environment variables at
-# deploy time (Azure App Service "Application settings" / Container Apps env vars), matching
-# .env.example's keys. See docs/ROADMAP.md's deploy notes.
+# deploy time (Cloud Run service env vars / --set-env-vars), matching .env.example's keys.
+# See docs/ROADMAP.md's deploy notes.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,23 +1,61 @@
 name: Backend Deploy
 
 # Build the backend image on every push to main, always publish it to GitHub Container
-# Registry (needs no extra setup -- uses the built-in GITHUB_TOKEN), then deploy to Azure Web
-# App for Containers IF the required secrets are present. The Azure step is intentionally
-# config-gated rather than required, matching this repo's pattern elsewhere (L1/L2/L3/Vertex
-# all fall back gracefully when unconfigured) -- until an App Service is actually provisioned
-# and its publish profile added as a secret, this workflow still runs green and just skips
-# that step.
+# Registry (needs no extra setup -- uses the built-in GITHUB_TOKEN; validates the Docker build
+# regardless of GCP config), then deploy to GCP Cloud Run IF the required secrets are present.
+# The Cloud Run step is intentionally config-gated rather than required, matching this repo's
+# pattern elsewhere (L1/L2/L3/Vertex all fall back gracefully when unconfigured) -- until the
+# one-time GCP setup below is done, this workflow still runs green and just skips that job.
 #
-# One-time setup to enable the Azure deploy step:
-#   1. Create an Azure Web App (Linux, Container) -- e.g. via the portal or
-#      `az webapp create --resource-group <rg> --plan <plan> --name <app-name> --deployment-container-image-name ghcr.io/thanoban/truthpixel-backend:latest`
-#   2. Download its publish profile (Azure Portal -> the Web App -> "Download publish profile",
-#      or `az webapp deployment list-publishing-profiles`)
-#   3. Add two repo secrets (Settings -> Secrets and variables -> Actions):
-#      - AZURE_WEBAPP_NAME: the App Service name from step 1
-#      - AZURE_WEBAPP_PUBLISH_PROFILE: the full XML contents from step 2
-#   4. Also set the app's runtime environment variables (Application Settings) to match
-#      backend/.env.example's keys -- the image ships with no .env baked in by design.
+# Auth uses Workload Identity Federation (keyless, short-lived tokens), not a downloaded
+# service-account JSON key sitting in a GitHub secret indefinitely -- this is GCP's recommended
+# approach for CI/CD. One-time setup (run once, from a machine with `gcloud` authenticated to
+# the target project -- both artifactregistry.googleapis.com and run.googleapis.com must be
+# enabled on the project first):
+#
+#   PROJECT_ID=<your-gcp-project-id>          # e.g. responsive-sun-491204-e0
+#   PROJECT_NUMBER=<your-gcp-project-number>  # gcloud projects describe $PROJECT_ID --format='value(projectNumber)'
+#   REGION=us-central1                        # match GOOGLE_CLOUD_LOCATION used for Vertex AI
+#   REPO=truthpixel                           # Artifact Registry repo name
+#   SA_NAME=truthpixel-deployer
+#   GITHUB_REPO=thanoban/TruthPixel           # owner/repo, exact match required below
+#
+#   # 1. Artifact Registry repo for the image
+#   gcloud artifacts repositories create $REPO --repository-format=docker --location=$REGION --project=$PROJECT_ID
+#
+#   # 2. Deploy service account + roles
+#   gcloud iam service-accounts create $SA_NAME --project=$PROJECT_ID
+#   for ROLE in roles/run.admin roles/artifactregistry.writer roles/iam.serviceAccountUser; do
+#     gcloud projects add-iam-policy-binding $PROJECT_ID \
+#       --member="serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --role="$ROLE"
+#   done
+#
+#   # 3. Workload Identity Pool + Provider trusting GitHub's OIDC issuer
+#   gcloud iam workload-identity-pools create github-pool --project=$PROJECT_ID --location=global
+#   gcloud iam workload-identity-pools providers create-oidc github-provider \
+#     --project=$PROJECT_ID --location=global --workload-identity-pool=github-pool \
+#     --issuer-uri="https://token.actions.githubusercontent.com" \
+#     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+#     --attribute-condition="assertion.repository=='${GITHUB_REPO}'"
+#
+#   # 4. Bind the service account to the pool, restricted to this exact repo
+#   gcloud iam service-accounts add-iam-policy-binding \
+#     "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --project=$PROJECT_ID \
+#     --role="roles/iam.workloadIdentityUser" \
+#     --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/${GITHUB_REPO}"
+#
+#   # 5. Add six repo secrets (Settings -> Secrets and variables -> Actions):
+#      - GCP_PROJECT_ID: $PROJECT_ID
+#      - GCP_REGION: $REGION
+#      - GCP_ARTIFACT_REPO: $REPO
+#      - CLOUD_RUN_SERVICE_NAME: e.g. truthpixel-backend
+#      - GCP_WORKLOAD_IDENTITY_PROVIDER: full resource name --
+#        projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+#      - GCP_SERVICE_ACCOUNT: ${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+#
+#   # 6. Set the Cloud Run service's runtime env vars (DATABASE_URL, L1_MODEL_PATH, etc. --
+#      matching backend/.env.example's keys) via `gcloud run services update --set-env-vars` or
+#      the Console -- the image ships with no .env baked in by design.
 
 on:
   push:
@@ -59,14 +97,43 @@ jobs:
           docker push "$IMAGE:latest"
           echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
-  deploy-azure:
+  deploy-gcp:
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: ${{ secrets.AZURE_WEBAPP_NAME != '' }}
+    if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+    permissions:
+      contents: read
+      id-token: write # required for Workload Identity Federation
     steps:
-      - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v3
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
         with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          images: ${{ needs.build-and-push.outputs.image }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ secrets.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Build and push to Artifact Registry
+        id: ar
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO }}/truthpixel-backend"
+          docker build -f backend/Dockerfile -t "$IMAGE:${{ github.sha }}" .
+          docker push "$IMAGE:${{ github.sha }}"
+          echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          region: ${{ secrets.GCP_REGION }}
+          service: ${{ secrets.CLOUD_RUN_SERVICE_NAME }}
+          image: ${{ steps.ar.outputs.image }}
+          # Explicit --port 8000 -- see backend/Dockerfile's comment on why the container isn't
+          # on Cloud Run's default 8080.
+          flags: "--port=8000"

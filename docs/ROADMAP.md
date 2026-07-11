@@ -4,10 +4,35 @@
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 > [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [AGENTS.md](AGENTS.md) ·
 > [CORRECTIONS.md](CORRECTIONS.md) (full-system audit log — bugs found/fixed each pass)
+>
+> **Current development block:** [EXECUTION_PLAN.md](EXECUTION_PLAN.md) (2026-07-10) — the
+> sequenced plan for forensic-grade accuracy (Track A), multi-agent automation (Track B),
+> and pilot readiness (Track C). Phase 1/2 items below are being executed in that order.
 
-## Reality snapshot — 2026-07-08
+## Reality snapshot — 2026-07-10 (4), superseding the one below
 
-Before reading the phase checklist, anchor on the repo as it really exists today:
+Re-verified by actually running the repo, not reading docs. **The most urgent item is a
+regression, not a missing feature:**
+
+| Area | State |
+|---|---|
+| 🔴 **Test suite** | **Currently broken**: 8/57 backend tests fail, full run takes 136s instead of ~20s. Root cause: tests aren't isolated from `backend/.env`'s real `GOOGLE_CLOUD_PROJECT`/`L1_MODEL_PATH` (added when Vertex/L1 went live), so "stub mode" tests make real Vertex calls and load the real CLIP checkpoint. `.github/workflows/backend-ci.yml` would fail on push as-is. See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-10 (4). **Fix this first.** |
+| L1 AI-gen | **Real, trained, live** — 0.9688 held-out AUROC, checkpoint in `backend/models/`, verified against a running server |
+| L2 forensics | **Still effectively stub.** `backend/app/forensics_classic.py` (ELA/noise/JPEG-ghost) is drafted but **confirmed not wired into `l2_forensics.py`** (`grep` for the import returns nothing). TruFor path exists but needs compute we don't have |
+| L3/L4 | Real (Sightengine w/ keys; EXIF+c2patool always on) |
+| L5 | Real — v0 hash/histogram + v1 CLIP-embedding blend + intra-system reuse detection |
+| Fusion | Hand-weighted only — learned-fusion runtime code exists (`ml/fusion/`) but **no model trained**, `FUSION_MODEL_PATH` unset, no labeled data (`ml/datagen/` doesn't exist) |
+| Agents | **Real, live, verified** — Vertex/Gemini semantic inspector + damage plausibility + report writer |
+| Platform | Auth/tenancy/rate-limits, async queue, persistence, **Alembic migrations**, structured tracing/observability, Dockerfile + CI workflow (untested against a real push), demo script — all real |
+| Reviewer/webapp surfaces | Both built; dashboard auth only verified against the default *disabled* path; webapp's full browser round-trip not re-verified since the last type fix |
+| Automation (Track B) | **Nothing built** — no batch API, no triage-router agent, no auto-dispositions, no cross-claim pattern agent |
+| Startup readiness (Track C) | Dockerfile+CI exist but **not deployed**; per-claim/per-tenant cost accounting now persists and reports, but no retention/PII/SLA doc or pilot kit yet |
+
+See [EXECUTION_PLAN.md](EXECUTION_PLAN.md) for the sequenced plan closing the L2/fusion/
+benchmark gaps, and CORRECTIONS.md 2026-07-10 (4) for the full analysis this snapshot summarizes.
+
+<details>
+<summary>Reality snapshot — 2026-07-08 (superseded, kept for history)</summary>
 
 | Area | Already built on `origin/main` | Branch-only today | Still missing before the own-model L1 upgrade is complete |
 |---|---|---|---|
@@ -21,6 +46,8 @@ the repo already contains the L1/L2 integration paths, yet they still depend on 
 configuration. L1 can already run via the HF ensemble with `HF_API_TOKEN`, but the
 domain-tuned checkpoint path still needs a real training run; L2 still needs an external
 TruFor checkout/weights.
+
+</details>
 
 ## Phase 0 — Working end-to-end demo (target: ~2–4 weeks of evenings)
 
@@ -39,6 +66,15 @@ Scaffold (done / in progress):
 - [x] Smoke tests (graph end-to-end, error isolation, combo rule)
 
 Remaining:
+- [ ] 🔴 **DO THIS FIRST — regression:** test suite isn't isolated from `backend/.env`'s real
+      `GOOGLE_CLOUD_PROJECT`/`L1_MODEL_PATH`; 8/57 tests fail when run together (136s vs.
+      ~20s normal). Fix: force stub-mode settings for the test session (fixture or
+      `.env.test`) regardless of what's in `.env`. See CORRECTIONS.md 2026-07-10 (4).
+      `backend-ci.yml` will fail on push until this is fixed.
+- [ ] L2: wire the already-drafted `backend/app/forensics_classic.py` (ELA + noise-
+      inconsistency + JPEG-ghost) into `l2_forensics.py` — currently not referenced at all
+      (confirmed via grep). This is EXECUTION_PLAN.md's A1, still not started despite the
+      module existing. Biggest remaining accuracy gap in the whole system.
 - [x] Install deps, run test suite, fix anything red
 - [x] Git init, first commit, push to github.com/thanoban/TruthPixel (user-authored commits, no AI co-author)
 - [x] L1 HF-ensemble path (zero-training, shipped): `backend/app/hf_inference.py` +
@@ -201,7 +237,7 @@ Celery worker still applies.)
       also not yet verified the image actually builds/runs in this environment (no Docker
       daemon available to test against here) — build and smoke-test it before relying on it.
 - [x] AuthN/AuthZ: per-tenant API keys, admin-token-gated key issuance, per-tenant + public-IP rate limits — landed ahead of schedule during Phase 0, see above
-- [ ] Observability: structured logs, per-claim trace, cost counters (Vertex/API spend per claim)
+- [x] Observability: structured logs, per-claim trace, persisted per-claim/per-tenant cost counters and reporting endpoints (Vertex/HF/Sightengine usage)
 
 **Exit criterion:** honest held-out-generator number published; one pilot-able deployment.
 
@@ -231,7 +267,8 @@ their own reviewers' labels.
 | Screenshot evasion | Recapture detection + screenshot-augmented training + semantic agent | Turn evasion into signal |
 | Training scope | 3 models only (L1 head, fusion meta, recapture CNN) | Feasible solo; everything else pretrained |
 | Headline metric | Held-out-generator AUROC + robustness matrix | The only honest number |
-| Hosting | Local dev → serverless scale-to-zero | Async bursty workload; no idle GPU |
+| Hosting | Local dev → GCP Cloud Run (2026-07-11, supersedes an earlier Azure plan) | Async bursty workload; no idle GPU; Cloud Run's perpetual free tier covers a pilot at $0, separate from and not dependent on the Vertex GenAI credit |
+| Database | SQLite (local dev) → Supabase Postgres (production) | Cloud Run's filesystem is ephemeral — SQLite would lose the whole claims/audit trail on every restart/redeploy; Supabase over GCP-native Cloud SQL for its free tier, zero provisioning, and built-in pgvector (future L5 v2 ANN search, could retire the standalone Qdrant service). No backend code changes needed either way — `DATABASE_URL` is the only switch (`backend/app/storage/repository.py`, `backend/alembic/env.py`) |
 | Agents | Gated Gemini pass, cost-gated regardless of credit | Semantics survive screenshots; spend scales with risk; $1,000 GCP credit is GenAI-App-Builder-scoped, not a blanket Vertex allowance — verify before assuming it applies (AGENTS.md) |
 | Training compute | Free Colab T4, not Vertex credits | $1,000 credit does not cover Colab Enterprise GPU / training compute (verified via Billing → Credits) — training stays $0 on Colab's free tier instead |
 | Git authorship | User-authored commits, no AI co-author trailer | User preference |
