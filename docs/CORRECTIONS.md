@@ -4,6 +4,31 @@
 > an honest finished-vs-remaining snapshot. Each entry is dated; newest first. This is an audit
 > trail, not a plan — see [ROADMAP.md](ROADMAP.md) for the phase-by-phase plan itself.
 
+## 2026-07-11 — test-session env isolation fixed; docs synced to current roadmap state
+
+Followed the roadmap's next urgent repo-side item: the test session is now isolated from
+`backend/.env` regardless of what real local credentials or model paths that file contains.
+
+**What was broken before:** tests that expected stub mode could accidentally pick up real
+`GOOGLE_CLOUD_PROJECT`, `L1_MODEL_PATH`, HF, or other external settings from `backend/.env`
+through `Settings(env_file=".env")`. That made the suite environment-sensitive and could turn
+"unit-ish" tests into live Vertex/checkpoint runs.
+
+**What changed:** root `conftest.py` now applies an `autouse` fixture that forces stub-safe
+defaults for the external settings (`GOOGLE_CLOUD_PROJECT`, `L1_MODEL_PATH`, `HF_API_TOKEN`,
+Sightengine keys, TruFor paths, `L5_EMBEDDING_ENABLED`) and clears the relevant runtime caches
+before and after each test (`get_settings`, L1 checkpoint loader, Vertex LLM cache, embedding
+cache, learned-fusion cache, storage/artifact/job caches).
+
+**Verified live:** ran the full suite with deliberately hostile shell env values
+(`GOOGLE_CLOUD_PROJECT=should-not-leak`, `L1_MODEL_PATH=D:/definitely/not/real.pt`) and the
+repo still passed cleanly: **78/78**.
+
+**Also synced in docs this pass:** ROADMAP.md no longer treats these as still-missing:
+- A1: L2 classical forensics fallback is already wired and verified
+- A1b: CASIA v2 eval harness exists in `ml/layer2_forensics/`
+- A4: synthetic fraud-pair datagen exists in `ml/datagen/fraud_pairs.py`
+
 ## 2026-07-10 (3) — Vertex AI agents wired live; two real bugs found and fixed
 
 Wired `GOOGLE_CLOUD_PROJECT` to a real GCP project (EduFX, GenAI App Builder credit scope —

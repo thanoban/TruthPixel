@@ -4,6 +4,28 @@
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 > [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [AGENTS.md](AGENTS.md) ·
 > [CORRECTIONS.md](CORRECTIONS.md) (full-system audit log — bugs found/fixed each pass)
+>
+> **Current development block:** [EXECUTION_PLAN.md](EXECUTION_PLAN.md) — the sequenced Track
+> A/B/C plan now driving the next slices after the Phase 0 demo baseline.
+
+## Reality snapshot — 2026-07-11
+
+Before reading the phase checklist, anchor on the repo as it really exists today:
+
+| Area | Current state |
+|---|---|
+| Test suite | **Green and isolated** — root `conftest.py` now forces stub-safe defaults for external settings regardless of `backend/.env`, so the suite no longer depends on local live creds/model paths |
+| L1 AI-gen | **Real, trained, live** — local checkpoint path + HF ensemble fallback + neutral stub fallback |
+| L2 forensics | **Real CPU fallback shipped** — TruFor preferred when configured, otherwise classical ELA/noise/JPEG-ghost fallback with persisted heatmap; no longer neutral-stub-only |
+| L2 benchmarking | **Harness exists** — `ml/layer2_forensics/` + `docs/CASIA_EVAL.md`; still needs a real local CASIA v2 checkout to produce the benchmark number |
+| L3/L4/L5 | Real — Sightengine/c2patool/EXIF plus L5 hash+histogram+CLIP blend and reuse detection |
+| Fusion | Weighted runtime active; learned-fusion runtime/training toolchain exists, but **no trained fusion artifact is deployed yet** |
+| Synthetic labels | **A4 shipped** — `ml/datagen/fraud_pairs.py` generates honest listing->claim clean/fraud pairs with masks and manifest metadata |
+| Automation / startup-readiness | Still largely ahead in docs only — no batch API, no triage-router, no cost-counter surface, no live deployment |
+
+The next code-facing roadmap work is no longer "fix the broken suite" or "wire classical L2" —
+those are done. The next substantive gaps are A5 learned fusion, B2 batch intake, and C3 cost
+counters, in the execution-plan order.
 
 ## Reality snapshot — 2026-07-08
 
@@ -39,6 +61,8 @@ Scaffold (done / in progress):
 - [x] Smoke tests (graph end-to-end, error isolation, combo rule)
 
 Remaining:
+- [x] Test-session env isolation from `backend/.env` (2026-07-11): root `conftest.py`
+      forces stub-safe defaults and clears runtime caches around every test
 - [x] Install deps, run test suite, fix anything red
 - [x] Git init, first commit, push to github.com/thanoban/TruthPixel (user-authored commits, no AI co-author)
 - [x] L1 HF-ensemble path (zero-training, shipped): `backend/app/hf_inference.py` +
@@ -63,6 +87,9 @@ Remaining:
       weights on any inference host (first load pulls ~1.3GB over the network).
 - [x] L2 real: TruFor subprocess inference (`backend/app/trufor.py`) + heatmap PNG artifact,
       gated on `l2_trufor_configured` (repo dir + model file set), stub fallback otherwise
+- [x] L2 classical fallback (A1): `backend/app/forensics_classic.py` is wired below TruFor in
+      precedence, with heatmap persistence and tests
+- [x] CASIA v2 eval harness (A1b): `ml/layer2_forensics/` + `docs/CASIA_EVAL.md`
 - [x] L3 real: Sightengine recapture API call (keys already templated in `.env.example`)
 - [x] L4: add c2patool subprocess check
 - [x] L5 real (v0): `context_checks.py` perceptual-hash + color-histogram similarity —
@@ -155,6 +182,9 @@ Remaining:
 - [x] Fixed live via the demo script above: L5 reuse-photo detection now runs independent of
       listing URLs, and `L5_EMBEDDING_ENABLED` now defaults to `false` (opt-in, matching
       L1/L2/L3's pattern) with the embedding call properly backgrounded via `asyncio.to_thread`.
+- [x] Synthetic fraud-pair datagen (A4): `ml/datagen/fraud_pairs.py` creates honest
+      listing->claim clean/fraud pairs plus masks and `manifest.jsonl`; see
+      `docs/FRAUD_PAIRS.md`
 
 **Exit criterion:** the screenshot-of-AI-image demo case is flagged with a correct explanation
 — **met**: `scripts/demo.py`'s `screenshot_of_ai` case is flagged (risk 0.80) in a live run
@@ -187,6 +217,8 @@ Celery worker still applies.)
       optional free API-key signup for higher usage (see USE_CASES.md §3)
 - [ ] Learned fusion in production: LightGBM/LogReg + calibration + SHAP trained on real labels,
       exported for backend runtime use (tooling exists, model artifacts do not)
+- [ ] A5 next: train/export the first learned-fusion artifact from A4 labels and verify
+      `FUSION_MODEL_PATH` end to end
 - [ ] Reviewer dashboard productionization: auth, tenant verification, deploy/runtime proof, and
       reviewer ergonomics on top of the existing scaffold
 - [ ] Feedback capture → labeled-claims table (fuel for fusion retraining)
