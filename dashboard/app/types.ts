@@ -113,6 +113,14 @@ export interface ClaimListItem {
   artifact_count: number;
 }
 
+export interface DashboardRuntime {
+  backend_url: string;
+  tenant_label: string;
+  reviewer_auth_mode: "local_dev_bypass" | "tenant_api_key_proxy";
+  api_key_configured: boolean;
+  default_reviewer_id: string;
+}
+
 export const LAYER_LABELS: Record<LayerId, string> = {
   l1_aigen: "AI-generation detection",
   l2_forensics: "Edit forensics",

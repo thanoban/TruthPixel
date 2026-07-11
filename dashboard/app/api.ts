@@ -2,15 +2,12 @@ import type {
   AuditEvent,
   ClaimListItem,
   ClaimQueueStatus,
+  DashboardRuntime,
   StoredClaim,
   ReviewDecisionValue,
 } from "./types";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-// Reviewer auth: set NEXT_PUBLIC_API_KEY when the backend has API_AUTH_ENABLED=true.
-// Unset by default, matching the backend's local-dev bypass — see dashboard/README.md.
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+export const DASHBOARD_API_ROOT = "/api";
 
 async function parseError(response: Response): Promise<string> {
   try {
@@ -23,11 +20,10 @@ async function parseError(response: Response): Promise<string> {
 }
 
 export async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${DASHBOARD_API_ROOT}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
       ...(init?.headers || {}),
     },
     cache: "no-store",
@@ -69,6 +65,10 @@ export async function fetchClaimStatus(claimId: string): Promise<ClaimQueueStatu
   return fetchApi<ClaimQueueStatus>(`/v1/claims/${claimId}/status`);
 }
 
+export async function fetchDashboardRuntime(): Promise<DashboardRuntime> {
+  return fetchApi<DashboardRuntime>("/runtime");
+}
+
 export async function submitDecision(input: {
   claimId: string;
   reviewerId: string;
@@ -83,4 +83,8 @@ export async function submitDecision(input: {
       reason: input.reason,
     }),
   });
+}
+
+export function getDashboardArtifactPath(downloadPath: string): string {
+  return downloadPath.replace(/^\/v1\//, `${DASHBOARD_API_ROOT}/`);
 }

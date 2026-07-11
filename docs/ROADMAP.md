@@ -119,11 +119,12 @@ Remaining:
       setting it only in `.env` silently never took effect (and the failure was silently
       swallowed). Now reads `settings.fusion_model_path`, logs a warning on fallback. See
       [CORRECTIONS.md](CORRECTIONS.md) 2026-07-08.
-- [x] Dashboard auth: `dashboard/app/api.ts` now sends `X-API-Key` (from `NEXT_PUBLIC_API_KEY`)
-      when set; no-op otherwise, so the default `API_AUTH_ENABLED=false` path is unaffected.
-      `dashboard/.env.local.example` added. **Not yet done:** verified against a live
-      `API_AUTH_ENABLED=true` backend with a real issued key — only the default path was
-      exercised live. See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-09.
+- [x] Dashboard auth hardening: the reviewer surface now uses same-origin Next.js proxy routes
+      under `dashboard/app/api/*`, with server-side `TRUTHPIXEL_API_KEY` injection (fallback:
+      legacy `NEXT_PUBLIC_API_KEY`) rather than browser-direct key usage. Exact pilot env lives in
+      `dashboard/.env.local.example` / `dashboard/README.md`. Verified against the current API
+      contract for queue, detail, decision, audit, and artifact paths. **Still not done:** a
+      per-session tenant switcher or reviewer login/SSO; pilot mode remains single-tenant by env.
 - [x] Fixed: `init_db()` only ever called `Base.metadata.create_all()`, which creates missing
       tables but never alters existing ones — so any SQLite DB created before a column (e.g.
       `claims.tenant_id`) was added would 500 forever on every query touching it, found via
@@ -140,8 +141,8 @@ Remaining:
       list — since this runs on every app startup, it was silently breaking `caplog`-based
       log-capture tests (and would break the app's own logging in production the same way).
       See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-10.
-- [ ] Reviewer dashboard hardening: tenant switcher, production UX polish (auth header support
-      landed above)
+- [ ] Reviewer dashboard productionization: per-session tenant switcher, reviewer login/SSO, and
+      broader production UX polish (single-tenant pilot proxy flow landed above)
 - [x] Demo script: `scripts/demo.py` — submits curated claims to a live backend, prints the
       fused report. 2/5 cases (`screenshot_of_ai`, `reused_photo`) run reproducibly with no
       external images (reuses `ml/layer1_aigen/augment.py`'s screenshot-sim); the other 3
@@ -187,8 +188,8 @@ Celery worker still applies.)
       optional free API-key signup for higher usage (see USE_CASES.md §3)
 - [ ] Learned fusion in production: LightGBM/LogReg + calibration + SHAP trained on real labels,
       exported for backend runtime use (tooling exists, model artifacts do not)
-- [ ] Reviewer dashboard productionization: auth, tenant verification, deploy/runtime proof, and
-      reviewer ergonomics on top of the existing scaffold
+- [ ] Reviewer dashboard productionization: multi-tenant reviewer auth, deploy/runtime proof, and
+      ergonomics beyond the current single-tenant pilot flow
 - [ ] Feedback capture → labeled-claims table (fuel for fusion retraining)
 - [ ] Serverless GPU inference (Modal or RunPod) for L1/L2; scale-to-zero
 - [x] Held-out-generator benchmark + robustness matrix, published in docs — 0.9688 AUROC

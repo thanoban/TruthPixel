@@ -98,6 +98,26 @@ h1 {
   line-height: 1.6;
 }
 
+.workspace-note {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(20, 83, 45, 0.08);
+  border: 1px solid rgba(20, 83, 45, 0.14);
+  display: grid;
+  gap: 6px;
+}
+
+.workspace-note strong {
+  font-size: 0.98rem;
+}
+
+.workspace-note span {
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
 .hero-metrics,
 .detail-metrics {
   display: grid;
@@ -165,6 +185,13 @@ button[type="submit"] {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+}
+
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
 }
 
 .queue-grid,
@@ -341,9 +368,22 @@ button[type="submit"] {
   font-family: "Segoe UI", sans-serif;
 }
 
+.search-field {
+  display: grid;
+  gap: 8px;
+  min-width: min(320px, 100%);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.search-field span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .decision-form input,
 .decision-form textarea,
-.decision-form select {
+.decision-form select,
+.search-field input {
   width: 100%;
   border-radius: 16px;
   border: 1px solid rgba(50, 42, 29, 0.14);
@@ -431,6 +471,10 @@ button[type="submit"] {
   .card-topline,
   .card-footer {
     flex-direction: column;
+  }
+
+  .toolbar-actions {
+    width: 100%;
   }
 
   .risk-row {

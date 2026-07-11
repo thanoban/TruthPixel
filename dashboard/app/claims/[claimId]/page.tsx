@@ -2,8 +2,21 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { API_URL, fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
-import type { AuditEvent, ClaimArtifact, ReviewDecisionValue, StoredClaim } from "../../types";
+import {
+  fetchClaim,
+  fetchClaimAudit,
+  fetchClaimStatus,
+  fetchDashboardRuntime,
+  getDashboardArtifactPath,
+  submitDecision,
+} from "../../api";
+import type {
+  AuditEvent,
+  ClaimArtifact,
+  DashboardRuntime,
+  ReviewDecisionValue,
+  StoredClaim,
+} from "../../types";
 import {
   LAYER_LABELS,
   formatPercent,
@@ -11,21 +24,44 @@ import {
   humanizeEvent,
 } from "../../types";
 
+const REVIEWER_ID_STORAGE_KEY = "truthpixel-reviewer-id";
+
 function getArtifact(claim: StoredClaim | null, kind: ClaimArtifact["kind"]): ClaimArtifact | null {
   return claim?.artifacts.find((artifact) => artifact.kind === kind) ?? null;
 }
 
 export default function ClaimDetailPage({ params }: { params: { claimId: string } }) {
+  const [runtime, setRuntime] = useState<DashboardRuntime | null>(null);
   const [claim, setClaim] = useState<StoredClaim | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(55);
-  const [reviewerId, setReviewerId] = useState("reviewer-1");
-  const [decision, setDecision] = useState<ReviewDecisionValue>("reject");
+  const [reviewerId, setReviewerId] = useState("");
+  const [decision, setDecision] = useState<ReviewDecisionValue | "">("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const stored = window.localStorage.getItem(REVIEWER_ID_STORAGE_KEY);
+    if (stored?.trim()) {
+      setReviewerId(stored.trim());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const trimmed = reviewerId.trim();
+    if (trimmed) {
+      window.localStorage.setItem(REVIEWER_ID_STORAGE_KEY, trimmed);
+    }
+  }, [reviewerId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,15 +70,21 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
       try {
         setLoading(true);
         setError(null);
-        const [claimData, auditData] = await Promise.all([
+        const [runtimeData, claimData, auditData] = await Promise.all([
+          fetchDashboardRuntime(),
           fetchClaim(params.claimId),
           fetchClaimAudit(params.claimId),
         ]);
         if (!cancelled) {
+          setRuntime(runtimeData);
           setClaim(claimData);
           setAudit(auditData);
-          if (claimData.decision?.reason) {
-            setReason(claimData.decision.reason);
+          if (claimData.decision) {
+            setDecision(claimData.decision.decision);
+            setReason(claimData.decision.reason || "");
+            setReviewerId((current) => current.trim() || claimData.decision?.reviewer_id || "");
+          } else if (runtimeData.default_reviewer_id) {
+            setReviewerId((current) => current.trim() || runtimeData.default_reviewer_id);
           }
         }
       } catch (err) {
@@ -84,6 +126,10 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
 
   async function handleDecisionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!decision) {
+      setError("Choose a reviewer decision before submitting.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -128,6 +174,16 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               <p className="hero-copy">
                 {claim.context.claim_reason || "No customer claim reason was submitted."}
               </p>
+              {runtime && (
+                <div className="workspace-note">
+                  <strong>{runtime.tenant_label}</strong>
+                  <span>
+                    {runtime.reviewer_auth_mode === "tenant_api_key_proxy"
+                      ? "Decisions flow through the dashboard proxy with a tenant reviewer key."
+                      : "Running in local-dev bypass mode; reviewer API-key auth is off."}
+                  </span>
+                </div>
+              )}
             </div>
             <div className="detail-metrics">
               <div className="metric-card">
@@ -168,13 +224,13 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               {originalArtifact ? (
                 <div className="overlay-stage">
                   <img
-                    src={`${API_URL}${originalArtifact.download_path}`}
+                    src={getDashboardArtifactPath(originalArtifact.download_path)}
                     alt="Original claim upload"
                     className="stage-image"
                   />
                   {heatmapArtifact && (
                     <img
-                      src={`${API_URL}${heatmapArtifact.download_path}`}
+                      src={getDashboardArtifactPath(heatmapArtifact.download_path)}
                       alt="Heatmap overlay"
                       className="stage-image overlay-image"
                       style={{ opacity: overlayOpacity / 100 }}
@@ -188,7 +244,7 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
                 {claim.artifacts.map((artifact) => (
                   <a
                     key={artifact.id}
-                    href={`${API_URL}${artifact.download_path}`}
+                    href={getDashboardArtifactPath(artifact.download_path)}
                     className="artifact-chip"
                     target="_blank"
                     rel="noreferrer"
@@ -219,7 +275,12 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
                 </label>
                 <label>
                   Decision
-                  <select value={decision} onChange={(event) => setDecision(event.target.value as ReviewDecisionValue)}>
+                  <select
+                    value={decision}
+                    onChange={(event) => setDecision(event.target.value as ReviewDecisionValue | "")}
+                    required
+                  >
+                    <option value="">Choose a reviewer decision</option>
                     <option value="approve">Approve</option>
                     <option value="reject">Reject</option>
                     <option value="needs_more_info">Needs more info</option>
@@ -232,9 +293,10 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
                     onChange={(event) => setReason(event.target.value)}
                     placeholder="Summarize the evidence that drove this call."
                     rows={5}
+                    required={decision === "reject" || decision === "needs_more_info"}
                   />
                 </label>
-                <button type="submit" disabled={saving || !reviewerId.trim()}>
+                <button type="submit" disabled={saving || !reviewerId.trim() || !decision}>
                   {saving ? "Saving..." : "Record decision"}
                 </button>
               </form>

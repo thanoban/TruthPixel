@@ -13,7 +13,7 @@
 | Surface | Who uses it | Auth | Status |
 |---|---|---|---|
 | **B2B API** (`POST /v1/claims`) | Marketplace/platform backends, integrated into their returns flow | Per-tenant API key when `API_AUTH_ENABLED=true`; local-dev bypass otherwise | Shipped API surface |
-| **Reviewer dashboard** (`dashboard/`) | A tenant's internal fraud-review staff | Reviewer auth still pending; today it reuses the stored-claim API | Scaffold built on `origin/main` |
+| **Reviewer dashboard** (`dashboard/`) | A tenant's internal fraud-review staff | Single-tenant server-side API-key proxy for pilot use; full reviewer login/SSO still pending | Pilot-usable reviewer surface |
 | **Public webapp** (`webapp/`) | Anyone — self-serve, one image at a time | Anonymous path exists; public-IP throttling is available when auth is enabled | Scaffolded now; not re-verified end-to-end here |
 
 All three sit on top of the same `run_claim()` LangGraph pipeline and the same fusion engine —
