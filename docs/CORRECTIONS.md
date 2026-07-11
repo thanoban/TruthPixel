@@ -29,6 +29,28 @@ repo still passed cleanly: **78/78**.
 - A1b: CASIA v2 eval harness exists in `ml/layer2_forensics/`
 - A4: synthetic fraud-pair datagen exists in `ml/datagen/fraud_pairs.py`
 
+## 2026-07-11 (2) — A5 bridge landed: fraud pairs -> fusion rows -> runtime artifact
+
+Followed the next roadmap slice after A4: the repo can now turn the synthetic fraud-pair
+dataset into labeled learned-fusion training rows and export a backend-loadable artifact.
+
+**What shipped:**
+- `ml/fusion/build_training_set.py` reads `manifest.jsonl` from the fraud-pair dataset and
+  runs the current analyzer stack over each claim image to produce `label + signals +
+  agent_findings` JSONL for `ml/fusion/train_meta.py`
+- `ml/fusion/train_meta.py` now emits roadmap-relevant metrics in the exported model:
+  `ece_*` and `precision_at_review_budget_*`, in addition to AUROC/Brier
+- `docs/FUSION_TRAINING.md` documents the end-to-end command path
+
+**Honesty note:** this does not mean a production fusion artifact is now checked into the
+repo. The new bridge makes A5 executable and verified, but any trained artifact remains an
+output of a local run, not a committed benchmark claim. Synthetic A4 labels are useful for
+calibration/pipeline verification, not a substitute for reviewer-backed production labels.
+
+**Verified live:** generated a tiny temporary fraud-pair dataset, built `fusion_train.jsonl`,
+ran `train_meta`, and confirmed `manifest.json`, `model.json`, `feature_table.csv`,
+`calibration.csv`, and `shap_background.csv` were emitted. Full suite: **79/79**.
+
 ## 2026-07-10 (3) — Vertex AI agents wired live; two real bugs found and fixed
 
 Wired `GOOGLE_CLOUD_PROJECT` to a real GCP project (EduFX, GenAI App Builder credit scope —

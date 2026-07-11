@@ -67,3 +67,5 @@ def test_train_and_export_writes_backend_friendly_artifacts(tmp_path: Path):
         == ARTIFACT_SCHEMA_VERSION
     )
     assert model_payload["metrics"]["train_rows"] >= 4
+    assert "ece_calibrated" in model_payload["metrics"]
+    assert "precision_at_review_budget_calibrated" in model_payload["metrics"]

@@ -25,6 +25,40 @@ def _sigmoid(value: np.ndarray | float) -> np.ndarray | float:
     return 1.0 / (1.0 + np.exp(-clipped))
 
 
+def _expected_calibration_error(
+    probabilities: np.ndarray, labels: np.ndarray, *, bins: int = 10
+) -> float:
+    if len(probabilities) == 0:
+        return 0.0
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    ece = 0.0
+    total = float(len(probabilities))
+    for lower, upper in zip(edges[:-1], edges[1:], strict=True):
+        if upper >= 1.0:
+            mask = (probabilities >= lower) & (probabilities <= upper)
+        else:
+            mask = (probabilities >= lower) & (probabilities < upper)
+        if not np.any(mask):
+            continue
+        confidence = float(np.mean(probabilities[mask]))
+        accuracy = float(np.mean(labels[mask]))
+        ece += (np.sum(mask) / total) * abs(confidence - accuracy)
+    return ece
+
+
+def _precision_at_review_budget(
+    probabilities: np.ndarray,
+    labels: np.ndarray,
+    *,
+    review_budget_fraction: float,
+) -> float:
+    if len(probabilities) == 0:
+        return 0.0
+    budget = max(1, int(np.ceil(len(probabilities) * review_budget_fraction)))
+    top_indices = np.argsort(probabilities)[::-1][:budget]
+    return float(np.mean(labels[top_indices]))
+
+
 def load_examples(path: Path) -> list[dict[str, Any]]:
     examples: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -94,6 +128,7 @@ def train_and_export(
     calibration_fraction: float = 0.3,
     random_state: int = 7,
     shap_background_size: int = 128,
+    review_budget_fraction: float = 0.1,
 ) -> dict[str, Any]:
     examples = load_examples(input_path)
     feature_rows = [
@@ -134,6 +169,32 @@ def train_and_export(
         "auroc_calibrated": round(float(roc_auc_score(labels, calibrated_probabilities)), 6),
         "brier_raw": round(float(brier_score_loss(labels, raw_probabilities)), 6),
         "brier_calibrated": round(float(brier_score_loss(labels, calibrated_probabilities)), 6),
+        "ece_raw": round(float(_expected_calibration_error(raw_probabilities, labels)), 6),
+        "ece_calibrated": round(
+            float(_expected_calibration_error(calibrated_probabilities, labels)),
+            6,
+        ),
+        "precision_at_review_budget_raw": round(
+            float(
+                _precision_at_review_budget(
+                    raw_probabilities,
+                    labels,
+                    review_budget_fraction=review_budget_fraction,
+                )
+            ),
+            6,
+        ),
+        "precision_at_review_budget_calibrated": round(
+            float(
+                _precision_at_review_budget(
+                    calibrated_probabilities,
+                    labels,
+                    review_budget_fraction=review_budget_fraction,
+                )
+            ),
+            6,
+        ),
+        "review_budget_fraction": round(float(review_budget_fraction), 6),
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -256,6 +317,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--calibration-fraction", type=float, default=0.3)
     parser.add_argument("--random-state", type=int, default=7)
     parser.add_argument("--shap-background-size", type=int, default=128)
+    parser.add_argument("--review-budget-fraction", type=float, default=0.1)
     return parser
 
 
@@ -268,6 +330,7 @@ def main() -> int:
         calibration_fraction=args.calibration_fraction,
         random_state=args.random_state,
         shap_background_size=args.shap_background_size,
+        review_budget_fraction=args.review_budget_fraction,
     )
     return 0
 

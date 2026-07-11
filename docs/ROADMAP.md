@@ -19,12 +19,12 @@ Before reading the phase checklist, anchor on the repo as it really exists today
 | L2 forensics | **Real CPU fallback shipped** — TruFor preferred when configured, otherwise classical ELA/noise/JPEG-ghost fallback with persisted heatmap; no longer neutral-stub-only |
 | L2 benchmarking | **Harness exists** — `ml/layer2_forensics/` + `docs/CASIA_EVAL.md`; still needs a real local CASIA v2 checkout to produce the benchmark number |
 | L3/L4/L5 | Real — Sightengine/c2patool/EXIF plus L5 hash+histogram+CLIP blend and reuse detection |
-| Fusion | Weighted runtime active; learned-fusion runtime/training toolchain exists, but **no trained fusion artifact is deployed yet** |
+| Fusion | Weighted runtime still active by default, but the **A5 bridge now exists**: fraud-pair dataset -> fusion-training JSONL -> backend-loadable learned artifact. No production artifact is checked in and `FUSION_MODEL_PATH` remains unset by default |
 | Synthetic labels | **A4 shipped** — `ml/datagen/fraud_pairs.py` generates honest listing->claim clean/fraud pairs with masks and manifest metadata |
 | Automation / startup-readiness | Still largely ahead in docs only — no batch API, no triage-router, no cost-counter surface, no live deployment |
 
 The next code-facing roadmap work is no longer "fix the broken suite" or "wire classical L2" —
-those are done. The next substantive gaps are A5 learned fusion, B2 batch intake, and C3 cost
+those are done. The next substantive gaps are reviewer-backed learned fusion deployment, B2 batch intake, and C3 cost
 counters, in the execution-plan order.
 
 ## Reality snapshot — 2026-07-08
@@ -185,6 +185,9 @@ Remaining:
 - [x] Synthetic fraud-pair datagen (A4): `ml/datagen/fraud_pairs.py` creates honest
       listing->claim clean/fraud pairs plus masks and `manifest.jsonl`; see
       `docs/FRAUD_PAIRS.md`
+- [x] A5 bridge: `ml/fusion/build_training_set.py` converts fraud-pair manifests into labeled
+      fusion-training rows, and `ml/fusion/train_meta.py` now exports ECE +
+      precision@review-budget metrics. See `docs/FUSION_TRAINING.md`
 
 **Exit criterion:** the screenshot-of-AI-image demo case is flagged with a correct explanation
 — **met**: `scripts/demo.py`'s `screenshot_of_ai` case is flagged (risk 0.80) in a live run
@@ -217,8 +220,8 @@ Celery worker still applies.)
       optional free API-key signup for higher usage (see USE_CASES.md §3)
 - [ ] Learned fusion in production: LightGBM/LogReg + calibration + SHAP trained on real labels,
       exported for backend runtime use (tooling exists, model artifacts do not)
-- [ ] A5 next: train/export the first learned-fusion artifact from A4 labels and verify
-      `FUSION_MODEL_PATH` end to end
+- [ ] Next fusion step: train a reviewer-backed artifact and wire a real deployed
+      `FUSION_MODEL_PATH`, rather than relying only on synthetic A4 labels
 - [ ] Reviewer dashboard productionization: auth, tenant verification, deploy/runtime proof, and
       reviewer ergonomics on top of the existing scaffold
 - [ ] Feedback capture → labeled-claims table (fuel for fusion retraining)
