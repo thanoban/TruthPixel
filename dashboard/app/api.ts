@@ -1,4 +1,5 @@
 import type {
+  ArtifactAccessResponse,
   AuditEvent,
   ClaimListItem,
   ClaimQueueStatus,
@@ -67,6 +68,16 @@ export async function fetchClaimAudit(claimId: string): Promise<AuditEvent[]> {
 
 export async function fetchClaimStatus(claimId: string): Promise<ClaimQueueStatus> {
   return fetchApi<ClaimQueueStatus>(`/v1/claims/${claimId}/status`);
+}
+
+export async function createArtifactAccessUrl(input: {
+  claimId: string;
+  artifactId: number;
+}): Promise<ArtifactAccessResponse> {
+  return fetchApi<ArtifactAccessResponse>(
+    `/v1/claims/${input.claimId}/artifacts/${input.artifactId}/access`,
+    { method: "POST" },
+  );
 }
 
 export async function submitDecision(input: {

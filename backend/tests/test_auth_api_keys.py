@@ -76,6 +76,94 @@ def test_tenant_api_keys_protect_claim_routes(monkeypatch, tmp_path):
     reset_artifact_store_state()
 
 
+def test_dashboard_routes_work_with_issued_tenant_key(monkeypatch, tmp_path):
+    configure_auth_env(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        tenant_a, key_a = create_tenant_and_key(client, "Dashboard Tenant A", "dashboard")
+        _, key_b = create_tenant_and_key(client, "Dashboard Tenant B", "dashboard")
+
+        missing_key_queue = client.get("/v1/claims")
+        assert missing_key_queue.status_code == 401
+        assert missing_key_queue.json()["detail"] == "API key required"
+
+        create_response = client.post(
+            "/v1/claims",
+            headers={"X-API-Key": key_a},
+            files={"image": ("dashboard.jpg", make_jpeg(), "image/jpeg")},
+            data={"order_id": "ORD-DASH", "product_sku": "SKU-DASH", "claim_reason": "damage"},
+        )
+        assert create_response.status_code == 200
+        created = create_response.json()
+        assert created["tenant_id"] == tenant_a["tenant_id"]
+        claim_id = created["claim_id"]
+        original_artifact = next(
+            artifact for artifact in created["artifacts"] if artifact["kind"] == "original_upload"
+        )
+
+        queue_response = client.get("/v1/claims?limit=20&decided=false", headers={"X-API-Key": key_a})
+        assert queue_response.status_code == 200
+        assert queue_response.json()[0]["claim_id"] == claim_id
+
+        detail_response = client.get(f"/v1/claims/{claim_id}", headers={"X-API-Key": key_a})
+        assert detail_response.status_code == 200
+
+        status_response = client.get(f"/v1/claims/{claim_id}/status", headers={"X-API-Key": key_a})
+        assert status_response.status_code == 200
+        assert status_response.json()["status"] == "completed"
+
+        audit_response = client.get(f"/v1/claims/{claim_id}/audit", headers={"X-API-Key": key_a})
+        assert audit_response.status_code == 200
+        assert [event["event_type"] for event in audit_response.json()] == [
+            "artifact_stored",
+            "claim_persisted",
+        ]
+
+        protected_artifact = client.get(
+            f"/v1/claims/{claim_id}/artifacts/{original_artifact['id']}"
+        )
+        assert protected_artifact.status_code == 401
+
+        access_response = client.post(
+            f"/v1/claims/{claim_id}/artifacts/{original_artifact['id']}/access",
+            headers={"X-API-Key": key_a},
+        )
+        assert access_response.status_code == 200
+        signed_download_url = access_response.json()["download_url"]
+        signed_artifact = client.get(signed_download_url)
+        assert signed_artifact.status_code == 200
+        assert signed_artifact.headers["content-type"].startswith("image/jpeg")
+        assert signed_artifact.content
+
+        foreign_detail = client.get(f"/v1/claims/{claim_id}", headers={"X-API-Key": key_b})
+        assert foreign_detail.status_code == 404
+        foreign_artifact_access = client.post(
+            f"/v1/claims/{claim_id}/artifacts/{original_artifact['id']}/access",
+            headers={"X-API-Key": key_b},
+        )
+        assert foreign_artifact_access.status_code == 404
+
+        decision_response = client.post(
+            f"/v1/claims/{claim_id}/decision",
+            headers={"X-API-Key": key_a},
+            json={
+                "reviewer_id": "dashboard-reviewer",
+                "decision": "reject",
+                "reason": "auth-on dashboard smoke",
+            },
+        )
+        assert decision_response.status_code == 200
+        assert decision_response.json()["decision"]["decision"] == "reject"
+
+        updated_audit = client.get(f"/v1/claims/{claim_id}/audit", headers={"X-API-Key": key_a})
+        assert updated_audit.status_code == 200
+        assert updated_audit.json()[-1]["event_type"] == "decision_recorded"
+
+    get_settings.cache_clear()
+    reset_storage_state()
+    reset_artifact_store_state()
+
+
 def test_api_key_rate_limit_returns_429(monkeypatch, tmp_path):
     configure_auth_env(monkeypatch, tmp_path)
 

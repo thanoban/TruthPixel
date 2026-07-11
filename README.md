@@ -23,6 +23,7 @@ final call.
 | [docs/USE_CASES.md](docs/USE_CASES.md) | Product surfaces (API / reviewer dashboard / public webapp) and use cases beyond return fraud |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 0–2 checklists and standing decisions |
 | [docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md) | Current development block: forensic-grade accuracy, multi-agent automation, pilot readiness — sequenced |
+| [docs/CLOUD_RUN_SUPABASE.md](docs/CLOUD_RUN_SUPABASE.md) | Cloud Run + Supabase deployment setup, runtime env, and smoke-test checklist |
 | [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | Full-system audit log — bugs found/fixed, finished vs. remaining, dated newest-first |
 
 ## The five signal layers
@@ -108,36 +109,39 @@ reviewed before committing), not another ad-hoc column patch.
 
 ## Deploying the backend
 
-`backend/Dockerfile` builds a production image — CPU-only torch (no CUDA wheels, much smaller),
-Pillow's `libgl1`/`libglib2.0-0` system deps included, no `.env` baked in (config comes from
-environment variables at deploy time, matching `.env.example`'s keys). Build from the repo root
-so `backend/models/` (the trained L1 checkpoint, if present) is in the build context:
+`backend/Dockerfile` builds a production image with CPU-only PyTorch and no `.env` baked in.
+Configuration comes from runtime environment variables matching `.env.example`. Build from the
+repo root so `backend/models/` is in the build context:
 
 ```bash
 docker build -f backend/Dockerfile -t truthpixel-backend .
 docker run -p 8000:8000 --env-file backend/.env truthpixel-backend
 ```
 
-**On Azure** (App Service / Container Apps, targeting Azure-for-Students credits — hosting
-only, not training compute; see [docs/ML_PLAN.md](docs/ML_PLAN.md) §6 for why training itself
-stays on free Colab/Kaggle): push the image to Azure Container Registry, then point an App
-Service (Linux, container) or Container Apps revision at it. Set the same keys from
-`.env.example` as Application Settings / environment variables — at minimum `DATABASE_URL`
-(Azure Database for PostgreSQL, or leave as SQLite for a single-instance low-volume deploy),
-`STORAGE_BACKEND=s3` with an S3-compatible endpoint or Azure Blob via a custom storage backend
-(not yet implemented — `local`/`s3` are the two working options today), and `L1_MODEL_PATH`
-pointing at the checkpoint baked into the image (`./models/l1_clip_head.pt`). First request
-after a cold start pulls the CLIP encoder weights (~1.3GB) if not already cached in the image
-layer — consider a startup health-check warm-up hit before routing real traffic.
+**On GCP Cloud Run + Supabase:** `.github/workflows/backend-deploy.yml` builds the image and
+deploys to Cloud Run when the required GCP repository secrets are configured. Set runtime
+variables on the Cloud Run service itself. Minimum production values are:
+
+- `DATABASE_URL`: Supabase transaction-pooler URL with `postgresql+psycopg://`, port `6543`,
+  and `sslmode=require`.
+- `API_AUTH_ENABLED=true`, `ADMIN_API_TOKEN=<strong random token>`, and
+  `ARTIFACT_ACCESS_TOKEN_SECRET=<strong random token>`.
+- `CORS_ALLOW_ORIGINS`: deployed dashboard/webapp origins.
+- `CELERY_TASK_ALWAYS_EAGER=true` for a single-service pilot, unless Redis and workers are
+  deployed separately.
+- `STORAGE_BACKEND=s3` plus `S3_*` variables for retained artifacts. `local` storage is only
+  suitable for throwaway smoke tests on Cloud Run.
+
+After deploy, issue a tenant and API key through the admin endpoints, then use the returned
+key as the dashboard's `NEXT_PUBLIC_API_KEY`.
 
 **CI/CD (GitHub Actions):** `.github/workflows/backend-ci.yml` runs the test suite on every
 push/PR touching `backend/`. `.github/workflows/backend-deploy.yml` builds `backend/Dockerfile`
 and publishes it to GitHub Container Registry on every push to `main` (needs no setup — uses
-the built-in `GITHUB_TOKEN`); it then deploys to an Azure Web App **only if** the
-`AZURE_WEBAPP_NAME`/`AZURE_WEBAPP_PUBLISH_PROFILE` repo secrets are set — config-gated the same
-way L1/L2/L3/Vertex are elsewhere in this repo, so the workflow stays green with no Azure
-resource provisioned yet. One-time setup steps for the Azure step are documented in the
-workflow file's header comment.
+the built-in `GITHUB_TOKEN`); it deploys to Cloud Run only if all required GCP secrets are
+set. One-time GCP setup, Supabase details, Cloud Run runtime variables, dashboard env, and the
+post-deploy smoke checklist are in
+[docs/CLOUD_RUN_SUPABASE.md](docs/CLOUD_RUN_SUPABASE.md).
 
 ## Layer 1 training scaffold
 

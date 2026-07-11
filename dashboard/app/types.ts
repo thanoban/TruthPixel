@@ -55,6 +55,11 @@ export interface ClaimArtifact {
   created_at: string;
 }
 
+export interface ArtifactAccessResponse {
+  download_url: string;
+  expires_at: string;
+}
+
 export interface AuditEvent {
   id: number;
   claim_id: string;

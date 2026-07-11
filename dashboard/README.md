@@ -26,15 +26,22 @@ implicit local-dev tenant and this just works — `NEXT_PUBLIC_API_KEY` can stay
 turn `API_AUTH_ENABLED=true`, set `NEXT_PUBLIC_API_KEY` to a tenant key issued via
 `POST /v1/admin/tenants/{tenant_id}/api-keys` (see `backend/app/auth.py`) — `app/api.ts`
 sends it as `X-API-Key` on every request when present. Still missing: a tenant switcher (one
-key is baked in at build/env time, not selectable per-session in the UI).
+key is baked in at build/env time, not selectable per-session in the UI). Artifact previews use
+short-lived backend-signed URLs so `<img>` previews and download links still work when the raw
+artifact endpoint is protected by `X-API-Key`.
+
+For Cloud Run deployments, set:
+
+```bash
+NEXT_PUBLIC_API_URL=https://<cloud-run-service-url>
+NEXT_PUBLIC_API_KEY=<issued-tenant-api-key>
+```
+
+The exact backend setup and smoke checklist live in
+[`docs/CLOUD_RUN_SUPABASE.md`](../docs/CLOUD_RUN_SUPABASE.md).
 
 ## Status
 
-Verified working end-to-end against a live local backend: queue list, claim detail (with
-heatmap overlay), decision submission, and audit-trail fetch all exercised successfully
-(`.codex/runlogs/dashboard.out.log` / `backend.out.log` — real 200s on
-`GET /v1/claims`, `GET /v1/claims/{id}`, `POST /v1/claims/{id}/decision`,
-`GET /v1/claims/{id}/audit`, `GET /v1/claims/{id}/artifacts/{artifact_id}`). `X-API-Key`
-support added 2026-07-09 (see [docs/CORRECTIONS.md](../docs/CORRECTIONS.md)) but not yet
-re-verified against a live `API_AUTH_ENABLED=true` backend — only against the default
-auth-disabled path. Still not production-hardened: no tenant switcher.
+Verified against backend auth-on tests for the dashboard API surface: tenant issuance, keyed
+queue/detail/status/audit/decision requests, missing-key 401s, and cross-tenant 404s. Still
+not production-hardened: no tenant switcher.

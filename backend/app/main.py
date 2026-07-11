@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from .artifact_access import create_artifact_access_token, verify_artifact_access_token
 from .artifacts import get_artifact_store
 from .auth import (
     AuthContext,
@@ -30,6 +31,7 @@ from .observability import (
 )
 from .signal_artifacts import persist_signal_artifacts
 from .schemas import (
+    ArtifactAccessResponse,
     ArtifactKind,
     ApiKeyCreateRequest,
     AuditEvent,
@@ -345,6 +347,44 @@ async def get_claim_artifacts(claim_id: str, auth: TenantAuth) -> list[ClaimArti
     if artifacts is None:
         raise HTTPException(404, "claim not found")
     return artifacts
+
+
+@app.post(
+    "/v1/claims/{claim_id}/artifacts/{artifact_id}/access",
+    response_model=ArtifactAccessResponse,
+)
+async def create_claim_artifact_access(
+    claim_id: str,
+    artifact_id: int,
+    auth: TenantAuth,
+) -> ArtifactAccessResponse:
+    artifact = get_artifact_record(claim_id, artifact_id, tenant_id=auth.tenant_id)
+    if artifact is None:
+        raise HTTPException(404, "artifact not found")
+    token, expires_at = create_artifact_access_token(
+        claim_id=claim_id,
+        artifact_id=artifact_id,
+        tenant_id=auth.tenant_id,
+    )
+    return ArtifactAccessResponse(
+        download_url=f"/v1/artifact-access/{token}",
+        expires_at=expires_at,
+    )
+
+
+@app.get("/v1/artifact-access/{token}")
+async def download_claim_artifact_with_token(token: str) -> Response:
+    payload = verify_artifact_access_token(token)
+    artifact = get_artifact_record(
+        payload["claim_id"],
+        payload["artifact_id"],
+        tenant_id=payload.get("tenant_id"),
+    )
+    if artifact is None:
+        raise HTTPException(404, "artifact not found")
+    data = get_artifact_store().get_bytes(artifact.storage_key)
+    headers = {"Content-Disposition": f'inline; filename="{artifact.filename}"'}
+    return Response(content=data, media_type=artifact.media_type, headers=headers)
 
 
 @app.get("/v1/claims/{claim_id}/artifacts/{artifact_id}")

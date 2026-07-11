@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { API_URL, fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
+import {
+  API_URL,
+  createArtifactAccessUrl,
+  fetchClaim,
+  fetchClaimAudit,
+  fetchClaimStatus,
+  submitDecision,
+} from "../../api";
 import type { AuditEvent, ClaimArtifact, ReviewDecisionValue, StoredClaim } from "../../types";
 import {
   LAYER_LABELS,
@@ -18,6 +25,7 @@ function getArtifact(claim: StoredClaim | null, kind: ClaimArtifact["kind"]): Cl
 export default function ClaimDetailPage({ params }: { params: { claimId: string } }) {
   const [claim, setClaim] = useState<StoredClaim | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [artifactUrls, setArtifactUrls] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(55);
@@ -38,9 +46,19 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
           fetchClaim(params.claimId),
           fetchClaimAudit(params.claimId),
         ]);
+        const accessEntries = await Promise.all(
+          claimData.artifacts.map(async (artifact) => {
+            const access = await createArtifactAccessUrl({
+              claimId: claimData.claim_id,
+              artifactId: artifact.id,
+            });
+            return [artifact.id, `${API_URL}${access.download_url}`] as const;
+          }),
+        );
         if (!cancelled) {
           setClaim(claimData);
           setAudit(auditData);
+          setArtifactUrls(Object.fromEntries(accessEntries));
           if (claimData.decision?.reason) {
             setReason(claimData.decision.reason);
           }
@@ -81,6 +99,8 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
 
   const originalArtifact = useMemo(() => getArtifact(claim, "original_upload"), [claim]);
   const heatmapArtifact = useMemo(() => getArtifact(claim, "heatmap"), [claim]);
+  const artifactUrl = (artifact: ClaimArtifact) =>
+    artifactUrls[artifact.id] ?? `${API_URL}${artifact.download_path}`;
 
   async function handleDecisionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -168,13 +188,13 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               {originalArtifact ? (
                 <div className="overlay-stage">
                   <img
-                    src={`${API_URL}${originalArtifact.download_path}`}
+                    src={artifactUrl(originalArtifact)}
                     alt="Original claim upload"
                     className="stage-image"
                   />
                   {heatmapArtifact && (
                     <img
-                      src={`${API_URL}${heatmapArtifact.download_path}`}
+                      src={artifactUrl(heatmapArtifact)}
                       alt="Heatmap overlay"
                       className="stage-image overlay-image"
                       style={{ opacity: overlayOpacity / 100 }}
@@ -188,7 +208,7 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
                 {claim.artifacts.map((artifact) => (
                   <a
                     key={artifact.id}
-                    href={`${API_URL}${artifact.download_path}`}
+                    href={artifactUrl(artifact)}
                     className="artifact-chip"
                     target="_blank"
                     rel="noreferrer"

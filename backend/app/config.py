@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     public_submission_enabled: bool = False
     public_rate_limit_requests: int = 5
     public_rate_limit_window_seconds: int = 3600
+    artifact_access_token_secret: str = ""
+    artifact_access_token_ttl_seconds: int = 300
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers on localhost

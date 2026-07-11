@@ -121,9 +121,9 @@ Remaining:
       [CORRECTIONS.md](CORRECTIONS.md) 2026-07-08.
 - [x] Dashboard auth: `dashboard/app/api.ts` now sends `X-API-Key` (from `NEXT_PUBLIC_API_KEY`)
       when set; no-op otherwise, so the default `API_AUTH_ENABLED=false` path is unaffected.
-      `dashboard/.env.local.example` added. **Not yet done:** verified against a live
-      `API_AUTH_ENABLED=true` backend with a real issued key — only the default path was
-      exercised live. See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-09.
+      `dashboard/.env.local.example` added. Auth-on backend tests now cover tenant issuance,
+      keyed dashboard requests, missing-key 401s, and cross-tenant 404s. Still not done:
+      deployed dashboard smoke against Cloud Run.
 - [x] Fixed: `init_db()` only ever called `Base.metadata.create_all()`, which creates missing
       tables but never alters existing ones — so any SQLite DB created before a column (e.g.
       `claims.tenant_id`) was added would 500 forever on every query touching it, found via
@@ -195,11 +195,11 @@ Celery worker still applies.)
       (screenshot_sim, sdxl/midjourney/flux held out), full matrix in
       [docs/KAGGLE_TRAINING.md](KAGGLE_TRAINING.md) and the L1 own-model item above
 - [x] Backend containerized: `backend/Dockerfile` (CPU-only torch, no `.env` baked in, checkpoint
-      included if `backend/models/` has one) + root `.dockerignore`. **Not yet done:** actually
-      deployed to Azure — Dockerfile is built and documented (README "Deploying the backend")
-      but not pushed to Azure Container Registry or running on App Service/Container Apps yet;
-      also not yet verified the image actually builds/runs in this environment (no Docker
-      daemon available to test against here) — build and smoke-test it before relying on it.
+      included if `backend/models/` has one) + root `.dockerignore`. The documented hosted path
+      is now Cloud Run + Supabase Postgres; see [CLOUD_RUN_SUPABASE.md](CLOUD_RUN_SUPABASE.md).
+      **Not yet done:** live Cloud Run deployment from this environment, because no target GCP
+      project/secrets/Supabase connection are available here. The repo-side workflow, runtime
+      env requirements, and smoke checklist are documented.
 - [x] AuthN/AuthZ: per-tenant API keys, admin-token-gated key issuance, per-tenant + public-IP rate limits — landed ahead of schedule during Phase 0, see above
 - [ ] Observability: structured logs, per-claim trace, cost counters (Vertex/API spend per claim)
 

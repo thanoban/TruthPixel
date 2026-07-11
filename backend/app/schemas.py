@@ -104,6 +104,11 @@ class ClaimArtifact(BaseModel):
     created_at: datetime
 
 
+class ArtifactAccessResponse(BaseModel):
+    download_url: str
+    expires_at: datetime
+
+
 class ClaimQueueStatus(BaseModel):
     claim_id: str
     tenant_id: str | None = None
