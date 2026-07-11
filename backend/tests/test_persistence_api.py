@@ -168,3 +168,40 @@ def test_missing_claim_returns_404(monkeypatch, tmp_path):
     get_settings.cache_clear()
     reset_storage_state()
     reset_artifact_store_state()
+
+
+def test_claim_persistence_uses_classical_l2_when_trufor_is_unconfigured(monkeypatch, tmp_path):
+    db_path = tmp_path / "truthpixel-classic.db"
+    artifact_dir = tmp_path / "artifacts"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("LOCAL_ARTIFACT_DIR", artifact_dir.as_posix())
+    monkeypatch.delenv("L2_TRUFOR_REPO_DIR", raising=False)
+    monkeypatch.delenv("L2_TRUFOR_MODEL_FILE", raising=False)
+    get_settings.cache_clear()
+    reset_storage_state()
+    reset_artifact_store_state()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/claims",
+            files={"image": ("sample.jpg", make_jpeg(), "image/jpeg")},
+            data={"order_id": "ORD-CLASSIC", "product_sku": "SKU-C", "claim_reason": "damage"},
+        )
+        assert response.status_code == 200
+        created = response.json()
+        assert len(created["artifacts"]) == 2
+
+        l2_signal = next(signal for signal in created["signals"] if signal["layer"] == "l2_forensics")
+        heatmap_artifact = next(
+            artifact for artifact in created["artifacts"] if artifact["kind"] == "heatmap"
+        )
+
+        assert l2_signal["evidence"]["provider"] == "classic_forensics"
+        assert l2_signal["evidence"]["fallback_reason"] == "trufor_unconfigured"
+        assert l2_signal["evidence"]["heatmap_available"] is True
+        assert l2_signal["evidence"]["heatmap_url"] == heatmap_artifact["download_path"]
+
+    get_settings.cache_clear()
+    reset_storage_state()
+    reset_artifact_store_state()

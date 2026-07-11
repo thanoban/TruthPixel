@@ -140,7 +140,7 @@ def _resize_map(matrix: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return np.asarray(resized, dtype=np.float32) / 255.0
 
 
-def _render_heatmap_png(
+def render_heatmap_png(
     anomaly_map: np.ndarray, confidence_map: np.ndarray | None, image_size: tuple[int, int]
 ) -> tuple[bytes, np.ndarray, np.ndarray | None]:
     resized_map = _resize_map(anomaly_map, image_size)
@@ -224,7 +224,7 @@ def run_trufor_inference(image: bytes) -> TruForResult:
             )
             score = float(np.clip(float(np.asarray(payload["score"]).squeeze()), 0.0, 1.0))
 
-        heatmap_png, resized_map, resized_conf = _render_heatmap_png(
+        heatmap_png, resized_map, resized_conf = render_heatmap_png(
             anomaly_map, confidence_map, image_size
         )
         confidence = (
