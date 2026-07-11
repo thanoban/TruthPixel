@@ -2,137 +2,97 @@
 
 **Multi-signal image-integrity verification for e-commerce return / refund fraud.**
 
-Given a customer-submitted "damaged product" photo, TruthPixel returns a calibrated
-fraud-risk score with an explainable, region-level report — combining AI-generation
-detection, edit forensics, screenshot/recapture detection, metadata provenance, and a
-product cross-check against the seller's own listing photos. A human reviewer makes the
-final call.
-
-> Not "an AI detector." The moat is **fusion + e-commerce context**, not any single model.
+Given a customer-submitted "damaged product" photo, TruthPixel returns a calibrated fraud-risk
+score with an explainable report by combining AI-generation detection, edit forensics,
+screenshot/recapture detection, metadata/provenance checks, and listing-photo context checks.
+A human reviewer makes the final call.
 
 ## Documentation
 
 | Doc | Covers |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Master design: positioning, signal layers, fusion, system architecture |
-| [docs/COMPETITORS.md](docs/COMPETITORS.md) | Full landscape — tools, models, APIs, datasets, our stance on each |
-| [docs/ML_PLAN.md](docs/ML_PLAN.md) | What we train, screenshot augmentation, honest evaluation protocol |
-| [docs/COLAB_TRAINING.md](docs/COLAB_TRAINING.md) | No local GPU: train the L1 head on Colab, all data/checkpoints in Google Drive |
-| [docs/AGENTS.md](docs/AGENTS.md) | LangGraph multi-agent system (Gemini on Vertex AI), cost gating |
-| [docs/USE_CASES.md](docs/USE_CASES.md) | Product surfaces (API / reviewer dashboard / public webapp) and use cases beyond return fraud |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 0–2 checklists and standing decisions |
-| [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | Full-system audit log — bugs found/fixed, finished vs. remaining, dated newest-first |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design and signal-layer architecture |
+| [docs/COMPETITORS.md](docs/COMPETITORS.md) | Landscape and product positioning |
+| [docs/ML_PLAN.md](docs/ML_PLAN.md) | Model/training strategy and evaluation stance |
+| [docs/AGENTS.md](docs/AGENTS.md) | LangGraph agent layer and cost-gating approach |
+| [docs/USE_CASES.md](docs/USE_CASES.md) | API, reviewer dashboard, and public webapp surfaces |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What is actually landed versus still pending |
+| [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | Audit log of bugs found/fixed and reconciliation notes |
+| [docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md) | Recommended next slices after this reconciliation |
 
-## The five signal layers
+## Current product surfaces
 
-| # | Layer | What it catches |
-|---|---|---|
-| L1 | AI-generation detection | Fully synthetic images (SDXL, Flux, Midjourney, …) |
-| L2 | Manipulation / edit forensics | Inpainting, splicing, copy-move (with region heatmap) |
-| L3 | Recapture / screenshot | Photo-of-screen / screenshot evasion — a fraud signal in itself |
-| L4 | Metadata & provenance | EXIF, C2PA / Content Credentials, SynthID (neutral-weight) |
-| L5 | E-commerce context cross-check | Claim photo vs. seller listing; reused/stolen damage photos |
+- `backend/`: FastAPI API for sync/async claims, storage, artifacts, audit trail, auth hooks,
+  reviewer decisions, and labeled-feedback exports
+- `dashboard/`: reviewer queue/detail workflow with artifact preview, audit trail, and decision capture
+- `webapp/`: self-serve upload/report surface over the same backend claim pipeline
 
-A calibrated **fusion meta-classifier** stacks all five into one risk score with per-signal
-explanations (SHAP). Output is a confidence-scored report, never an automatic binary verdict.
+## Current status
 
-## Repo layout
+Landed on this branch:
+- sync + async claim submission
+- persistence, artifact storage, audit trail, reviewer decisions
+- tenant/admin auth hooks and public submission gate
+- public webapp productization
+- reviewer dashboard hardening
+- tenant/admin label export endpoints for reviewed claims
+- test-suite isolation from local `backend/.env`
 
-```
-backend/     FastAPI service: API, orchestrator, analyzers (L1–L5), fusion, persistence,
-             artifact storage, async job queue (see backend/app/{storage,artifacts,jobs}.py)
-ml/          Model training & evaluation — `layer1_aigen/` plus `fusion/` tooling
-dashboard/   Reviewer dashboard scaffold — queue, claim detail, decision capture, heatmap overlay
-webapp/      Public self-serve webapp — anyone checks one image, no tenant/order context
-docs/        Architecture & design docs
-```
+Not yet landed here:
+- observability/tracing stack
+- classical L2 fallback branch
+- batch claims API
+- trained learned-fusion artifact in production
+- full production verification of dashboard auth against a live protected backend
 
-`ml/fusion/` also exists now for learned-fusion feature assembly/training export. The main
-remaining repo-layout gaps are `ml/recapture/`, `ml/datagen/`, and any deployment `scripts/`
-you decide to add. Product surfaces today: B2B API, reviewer dashboard scaffold, and the
-public webapp; see [docs/USE_CASES.md](docs/USE_CASES.md) for the current surface-by-surface
-status.
-
-## Quickstart (local-first)
+## Quickstart
 
 ```bash
-# 1. Backend API — SQLite DB + local-disk artifact storage are created automatically
-#    on first run (no external services required). L1 has a local-checkpoint path plus
-#    an HF-ensemble path; L2 has a TruFor adapter. Both fall back safely when unconfigured.
 cd backend
-python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
+python -m venv .venv
+. .venv/Scripts/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
-
-# 2. Synchronous claim (analyzes inline, returns the full report)
-curl -X POST http://localhost:8000/v1/claims \
-  -F "image=@sample.jpg" -F "order_id=A123" -F "product_sku=SKU-9"
-
-# 3. Async claim (queues via Celery, poll for status) — see note below
-curl -X POST http://localhost:8000/v1/claims/async -F "image=@sample.jpg"
-curl http://localhost:8000/v1/claims/<claim_id>/status
-
-# 4. Or use the public webapp (thin client over the same API; untested end-to-end so far)
-cd ../webapp
-npm install
-cp .env.local.example .env.local
-npm run dev   # http://localhost:3000
-
-# 5. Run the repo test suite from the project root
-cd ..
-backend\.venv\Scripts\python -m pytest
 ```
 
-`/v1/claims/async` needs a real Celery worker + Redis to actually process anything —
-`celery -A app.celery_app worker --loglevel=info` from `backend/`, with `docker compose up -d`
-for Redis. Without a worker, queued claims stay `pending` forever. For local dev without
-either, set `CELERY_TASK_ALWAYS_EAGER=true` (processes synchronously inline — same as tests).
-
-Optional local infra (Postgres / Redis / Qdrant / MinIO) via `docker compose up -d`. Not
-required for the synchronous endpoint — defaults are SQLite + local-disk storage. Postgres and
-MinIO/S3 are real, working alternatives (`DATABASE_URL`, `STORAGE_BACKEND=s3`); Qdrant is the
-one service in docker-compose not wired into any code path yet (see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6). L1 still needs either `HF_API_TOKEN` (HF
-ensemble) or `L1_MODEL_PATH` (local checkpoint), and L2 still needs the external TruFor repo
-and weights to stop falling back to its neutral path.
-
-## Layer 1 training scaffold
-
-The `ml/layer1_aigen/` package now includes:
-- GenImage-style dataset discovery and stable train/val/test assignment
-- Screenshot/re-save augmentation helpers aligned with `docs/ML_PLAN.md`
-- A frozen OpenCLIP encoder + trainable probe-head scaffold
-- Train/eval CLI entry points and lightweight ML helper tests
-
-To work on `L1` locally (with a GPU):
+Submit a claim:
 
 ```bash
-cd ml
-pip install -r requirements.txt
-python -m layer1_aigen.train --data-root path/to/dataset
+curl -X POST http://localhost:8000/v1/claims ^
+  -F "image=@sample.jpg" ^
+  -F "order_id=A123" ^
+  -F "product_sku=SKU-9"
 ```
 
-No local GPU? See [docs/COLAB_TRAINING.md](docs/COLAB_TRAINING.md) — same `ml/layer1_aigen/`
-code, run on Colab's free T4, with all datasets and checkpoints living in Google Drive (no
-local downloads at all).
+Run the public webapp:
 
-## Status
+```bash
+cd webapp
+npm install
+copy .env.local.example .env.local
+npm run dev
+```
 
-Real (not stub) today: **L3** recapture via Sightengine API, **L4** metadata via EXIF + a real
-`c2patool` subprocess check, **L5 v0** context cross-check (perceptual-hash + color-histogram
-similarity against seller listing photos and recent claims), persistence/audit/artifact
-storage, async queueing, tenant/admin auth hooks, and the reviewer dashboard scaffold.
+Run the reviewer dashboard:
 
-L1 is a three-mode runtime: local CLIP-head checkpoint first, then an HF Inference API ensemble
-(`HF_API_TOKEN` + `L1_HF_MODELS`), then the neutral stub if neither is configured. That means
-the missing piece for a non-stub L1 is configuration or a trained checkpoint, not missing repo
-code.
+```bash
+cd dashboard
+npm install
+copy .env.local.example .env.local
+npm run dev
+```
 
-Partially real: **L2** has TruFor subprocess integration plus heatmap artifact persistence, but
-falls back to the neutral stub until an external TruFor checkout + weights are configured.
-Vertex agents run in template/stub mode until `GOOGLE_CLOUD_PROJECT` is set. The public webapp
-and dashboard code both exist; this pass verifies their production builds, not a fresh
-browser-driven end-to-end session. Full checklist in [docs/ROADMAP.md](docs/ROADMAP.md).
+Run tests from the repo root:
+
+```bash
+pytest -c pytest.ini -q
+```
+
+## Notes
+
+- Anonymous webapp uploads require `PUBLIC_SUBMISSION_ENABLED=true` on the backend.
+- The dashboard can proxy `X-API-Key` when `NEXT_PUBLIC_API_KEY` is configured.
+- Label exports now exist at tenant/admin endpoints for retraining and audit workflows.
 
 ## License
 
