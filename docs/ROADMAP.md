@@ -21,10 +21,10 @@ Before reading the phase checklist, anchor on the repo as it really exists today
 | L3/L4/L5 | Real — Sightengine/c2patool/EXIF plus L5 hash+histogram+CLIP blend and reuse detection |
 | Fusion | Weighted runtime still active by default, but the **A5 + A5b bridges now exist**: fraud-pair dataset -> fusion-training JSONL -> backend-loadable learned artifact -> robustness report across the four eval variants. No production artifact is checked in and `FUSION_MODEL_PATH` remains unset by default |
 | Synthetic labels | **A4 shipped** — `ml/datagen/fraud_pairs.py` generates honest listing->claim clean/fraud pairs with masks and manifest metadata |
-| Automation / startup-readiness | Still largely ahead in docs only — no batch API, no triage-router, no cost-counter surface, no live deployment |
+| Automation / startup-readiness | Batch intake is now real (`POST /v1/claims/batch`), but triage-router, cost-counter surface, and live deployment are still ahead |
 
 The next code-facing roadmap work is no longer "fix the broken suite" or "wire classical L2" —
-those are done. The next substantive gaps are A6 benchmark publication, reviewer-backed learned fusion deployment, B2 batch intake, and C3 cost
+those are done. The next substantive gaps are A6 benchmark publication, reviewer-backed learned fusion deployment, and C3 cost
 counters, in the execution-plan order.
 
 ## Reality snapshot — 2026-07-08
@@ -241,6 +241,9 @@ Celery worker still applies.)
       also not yet verified the image actually builds/runs in this environment (no Docker
       daemon available to test against here) — build and smoke-test it before relying on it.
 - [x] AuthN/AuthZ: per-tenant API keys, admin-token-gated key issuance, per-tenant + public-IP rate limits — landed ahead of schedule during Phase 0, see above
+- [x] B2 batch intake: `POST /v1/claims/batch` accepts repeated multipart `images` plus per-item
+      `items_json`, reuses the async queue path, and returns `count + ClaimQueueStatus[]`.
+      See [docs/BATCH_API.md](BATCH_API.md)
 - [ ] Observability: structured logs, per-claim trace, cost counters (Vertex/API spend per claim)
 
 **Exit criterion:** honest held-out-generator number published; one pilot-able deployment.

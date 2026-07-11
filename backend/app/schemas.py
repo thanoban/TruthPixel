@@ -118,6 +118,19 @@ class ClaimQueueStatus(BaseModel):
     poll_path: str
 
 
+class BatchClaimQueueRequestItem(BaseModel):
+    order_id: str = ""
+    product_sku: str = ""
+    claim_reason: str = ""
+    listing_image_urls: list[str] = Field(default_factory=list)
+    webhook_url: str = ""
+
+
+class BatchClaimQueueResponse(BaseModel):
+    count: int = Field(ge=0)
+    claims: list[ClaimQueueStatus] = Field(default_factory=list)
+
+
 class ClaimReport(BaseModel):
     claim_id: str
     context: ClaimContext

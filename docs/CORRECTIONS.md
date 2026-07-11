@@ -4,6 +4,32 @@
 > an honest finished-vs-remaining snapshot. Each entry is dated; newest first. This is an audit
 > trail, not a plan — see [ROADMAP.md](ROADMAP.md) for the phase-by-phase plan itself.
 
+## 2026-07-11 (4) — B2 batch intake shipped; async queue ID drift fixed
+
+Followed the next unblocked backend roadmap slice: batch claim intake is now a real API on top
+of the existing async queue, and the shared queue path no longer drifts claim IDs between the
+request log and the worker lifecycle.
+
+**What shipped:**
+- `POST /v1/claims/batch` in `backend/app/main.py`
+- request schema + response wrapper in `backend/app/schemas.py`
+- `docs/BATCH_API.md`
+- integration coverage in `backend/tests/test_batch_claims.py`
+
+**What was broken before:** while wiring batch intake, the full suite exposed an older async
+queue bug: `POST /v1/claims/async` logged `claim_async_enqueued` using one fresh `claim_id`,
+then the shared enqueue helper generated a second `claim_id` before persistence/dispatch. The
+request returned the second ID, but observability captured the first one, which broke the
+worker-lifecycle trace contract.
+
+**What changed:** `_enqueue_claim_from_bytes(...)` now accepts an optional preassigned
+`claim_id`, and the async endpoint passes its already-bound ID through that helper. Batch items
+reuse the same helper, so each queued item now has one canonical claim ID from request logging
+through task dispatch, persistence, status polling, and webhook completion.
+
+**Verified live:** focused queue/auth tests passed first, then the full suite passed cleanly:
+**82/82**.
+
 ## 2026-07-11 — test-session env isolation fixed; docs synced to current roadmap state
 
 Followed the roadmap's next urgent repo-side item: the test session is now isolated from

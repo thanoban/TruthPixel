@@ -1,3 +1,4 @@
+import json
 import logging
 from time import perf_counter
 from contextlib import asynccontextmanager
@@ -33,6 +34,8 @@ from .schemas import (
     ArtifactKind,
     ApiKeyCreateRequest,
     AuditEvent,
+    BatchClaimQueueRequestItem,
+    BatchClaimQueueResponse,
     ClaimArtifact,
     ClaimContext,
     ClaimQueueStatus,
@@ -126,6 +129,92 @@ SubmissionAuth = Annotated[AuthContext, Depends(allow_public_submission)]
 TenantAuth = Annotated[AuthContext, Depends(require_tenant_api_key)]
 
 
+def _parse_listing_urls(raw: str) -> list[str]:
+    return [u.strip() for u in raw.split(",") if u.strip()]
+
+
+async def _validate_uploaded_image(image: UploadFile) -> bytes:
+    if image.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(415, f"unsupported content type: {image.content_type}")
+    data = await image.read()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "image exceeds 15 MB limit")
+    if not data:
+        raise HTTPException(400, "empty image upload")
+    return data
+
+
+def _build_claim_context(
+    *,
+    order_id: str,
+    product_sku: str,
+    claim_reason: str,
+    listing_image_urls: list[str],
+) -> ClaimContext:
+    return ClaimContext(
+        order_id=order_id,
+        product_sku=product_sku,
+        claim_reason=claim_reason,
+        listing_image_urls=listing_image_urls,
+    )
+
+
+def _enqueue_claim_from_bytes(
+    *,
+    auth: AuthContext,
+    image_bytes: bytes,
+    image_filename: str,
+    image_content_type: str,
+    context: ClaimContext,
+    webhook_url: str,
+    claim_id: str | None = None,
+) -> ClaimQueueStatus:
+    claim_id = claim_id or str(uuid4())
+    bind_claim_context(claim_id=claim_id, tenant_id=auth.tenant_id)
+    create_pending_claim(claim_id, context, webhook_url=webhook_url, tenant_id=auth.tenant_id)
+    stored = get_artifact_store().put_bytes(
+        claim_id=claim_id,
+        kind=ArtifactKind.ORIGINAL_UPLOAD.value,
+        data=image_bytes,
+        filename=image_filename or "claim-upload",
+        media_type=image_content_type or "application/octet-stream",
+    )
+    add_artifact(
+        claim_id=claim_id,
+        kind=ArtifactKind.ORIGINAL_UPLOAD,
+        filename=stored.filename,
+        media_type=stored.media_type,
+        byte_size=stored.byte_size,
+        sha256=stored.sha256,
+        storage_backend=stored.storage_backend,
+        storage_key=stored.storage_key,
+        tenant_id=auth.tenant_id,
+    )
+    task_id = enqueue_claim_processing(claim_id)
+    queue_status = set_claim_task_info(claim_id, task_id)
+    if queue_status is None:
+        raise HTTPException(500, "claim was queued but task metadata could not be stored")
+    return queue_status
+
+
+def _parse_batch_items(items_json: str, expected_count: int) -> list[BatchClaimQueueRequestItem]:
+    try:
+        payload = json.loads(items_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, f"invalid items_json: {exc.msg}") from exc
+    if not isinstance(payload, list):
+        raise HTTPException(400, "items_json must decode to a JSON array")
+    if len(payload) != expected_count:
+        raise HTTPException(
+            400,
+            f"items_json length ({len(payload)}) must match uploaded image count ({expected_count})",
+        )
+    try:
+        return [BatchClaimQueueRequestItem.model_validate(item) for item in payload]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"invalid batch item payload: {exc}") from exc
+
+
 @app.get("/health")
 async def health() -> dict:
     settings = get_settings()
@@ -146,19 +235,13 @@ async def analyze_claim(
     claim_reason: str = Form(""),
     listing_image_urls: str = Form(""),  # comma-separated
 ) -> StoredClaim:
-    if image.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(415, f"unsupported content type: {image.content_type}")
-    data = await image.read()
-    if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(413, "image exceeds 15 MB limit")
-    if not data:
-        raise HTTPException(400, "empty image upload")
+    data = await _validate_uploaded_image(image)
 
-    context = ClaimContext(
+    context = _build_claim_context(
         order_id=order_id,
         product_sku=product_sku,
         claim_reason=claim_reason,
-        listing_image_urls=[u.strip() for u in listing_image_urls.split(",") if u.strip()],
+        listing_image_urls=_parse_listing_urls(listing_image_urls),
     )
     claim_id = str(uuid4())
     bind_claim_context(claim_id=claim_id, tenant_id=auth.tenant_id)
@@ -228,22 +311,16 @@ async def queue_claim_analysis(
     listing_image_urls: str = Form(""),
     webhook_url: str = Form(""),
 ) -> ClaimQueueStatus:
-    if image.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(415, f"unsupported content type: {image.content_type}")
-    data = await image.read()
-    if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(413, "image exceeds 15 MB limit")
-    if not data:
-        raise HTTPException(400, "empty image upload")
+    data = await _validate_uploaded_image(image)
 
-    claim_id = str(uuid4())
-    bind_claim_context(claim_id=claim_id, tenant_id=auth.tenant_id)
-    context = ClaimContext(
+    context = _build_claim_context(
         order_id=order_id,
         product_sku=product_sku,
         claim_reason=claim_reason,
-        listing_image_urls=[u.strip() for u in listing_image_urls.split(",") if u.strip()],
+        listing_image_urls=_parse_listing_urls(listing_image_urls),
     )
+    claim_id = str(uuid4())
+    bind_claim_context(claim_id=claim_id, tenant_id=auth.tenant_id)
     log_event(
         logger,
         "claim_async_enqueued",
@@ -251,29 +328,15 @@ async def queue_claim_analysis(
         byte_size=len(data),
         webhook_configured=bool(webhook_url),
     )
-    create_pending_claim(claim_id, context, webhook_url=webhook_url, tenant_id=auth.tenant_id)
-    stored = get_artifact_store().put_bytes(
+    queue_status = _enqueue_claim_from_bytes(
+        auth=auth,
+        image_bytes=data,
+        image_filename=image.filename or "claim-upload",
+        image_content_type=image.content_type or "application/octet-stream",
+        context=context,
+        webhook_url=webhook_url,
         claim_id=claim_id,
-        kind=ArtifactKind.ORIGINAL_UPLOAD.value,
-        data=data,
-        filename=image.filename or "claim-upload",
-        media_type=image.content_type or "application/octet-stream",
     )
-    add_artifact(
-        claim_id=claim_id,
-        kind=ArtifactKind.ORIGINAL_UPLOAD,
-        filename=stored.filename,
-        media_type=stored.media_type,
-        byte_size=stored.byte_size,
-        sha256=stored.sha256,
-        storage_backend=stored.storage_backend,
-        storage_key=stored.storage_key,
-        tenant_id=auth.tenant_id,
-    )
-    task_id = enqueue_claim_processing(claim_id)
-    queue_status = set_claim_task_info(claim_id, task_id)
-    if queue_status is None:
-        raise HTTPException(500, "claim was queued but task metadata could not be stored")
     log_event(
         logger,
         "claim_async_accepted",
@@ -281,6 +344,48 @@ async def queue_claim_analysis(
         status=queue_status.status,
     )
     return queue_status
+
+
+@app.post(
+    "/v1/claims/batch",
+    response_model=BatchClaimQueueResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def queue_claim_batch(
+    auth: TenantAuth,
+    images: list[UploadFile] = File(...),
+    items_json: str = Form(...),
+) -> BatchClaimQueueResponse:
+    if not images:
+        raise HTTPException(400, "at least one image is required")
+    items = _parse_batch_items(items_json, len(images))
+    queued: list[ClaimQueueStatus] = []
+    for image, item in zip(images, items, strict=True):
+        data = await _validate_uploaded_image(image)
+        context = _build_claim_context(
+            order_id=item.order_id,
+            product_sku=item.product_sku,
+            claim_reason=item.claim_reason,
+            listing_image_urls=item.listing_image_urls,
+        )
+        queue_status = _enqueue_claim_from_bytes(
+            auth=auth,
+            image_bytes=data,
+            image_filename=image.filename or "claim-upload",
+            image_content_type=image.content_type or "application/octet-stream",
+            context=context,
+            webhook_url=item.webhook_url,
+        )
+        bind_claim_context(claim_id=queue_status.claim_id, tenant_id=auth.tenant_id)
+        log_event(
+            logger,
+            "claim_batch_item_accepted",
+            task_id=queue_status.task_id or "",
+            batch_size=len(images),
+            status=queue_status.status,
+        )
+        queued.append(queue_status)
+    return BatchClaimQueueResponse(count=len(queued), claims=queued)
 
 
 @app.get("/v1/claims", response_model=list[ClaimListItem])
