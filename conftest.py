@@ -29,15 +29,20 @@ def _clear_runtime_caches() -> None:
     from app.analyzers import l1_aigen
     from app.artifacts import reset_artifact_store_state
     from app.config import get_settings
-    from app.embeddings import reset_embedding_cache
     from app.fusion.learned import load_learned_fusion_model
     from app.jobs import reset_job_state
     from app.storage import reset_storage_state
 
+    try:
+        from app.embeddings import reset_embedding_cache
+    except ModuleNotFoundError:
+        reset_embedding_cache = None
+
     get_settings.cache_clear()
     l1_aigen._load_runtime.cache_clear()
     get_vision_llm.cache_clear()
-    reset_embedding_cache()
+    if reset_embedding_cache is not None:
+        reset_embedding_cache()
     load_learned_fusion_model.cache_clear()
     reset_job_state()
     reset_storage_state()
