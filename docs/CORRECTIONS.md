@@ -51,6 +51,28 @@ calibration/pipeline verification, not a substitute for reviewer-backed producti
 ran `train_meta`, and confirmed `manifest.json`, `model.json`, `feature_table.csv`,
 `calibration.csv`, and `shap_background.csv` were emitted. Full suite: **79/79**.
 
+## 2026-07-11 (3) — A5b fusion robustness harness landed
+
+Followed the next execution-plan slice after the A5 bridge: the repo can now evaluate the L2 +
+fusion stack across the existing robustness variants on the A4 fraud-pair dataset.
+
+**What shipped:**
+- `ml/fusion/robustness_eval.py` runs the current analyzer stack plus fusion across
+  `pristine`, `jpeg_q75`, `screenshot_sim`, and `social_roundtrip`
+- supports both the weighted fallback path and an optional learned artifact via
+  `--fusion-model-path`
+- reports `fused_auroc`, `fused_accuracy`, `fused_precision_at_review_budget`,
+  `fused_review_rate`, plus the corresponding L2 metrics
+- `docs/FUSION_ROBUSTNESS.md` documents the command path
+
+**Verified live:** ran the full chain end to end — generated fraud pairs, built fusion rows,
+trained/exported a learned artifact, then evaluated the robustness report with that artifact
+active. Full suite: **80/80**.
+
+**Scope honesty:** this is the A4 synthetic-data robustness report, not a published external
+benchmark. CASIA v2 remains the external splice benchmark path, and `docs/BENCHMARK.md`
+remains the next missing artifact.
+
 ## 2026-07-10 (3) — Vertex AI agents wired live; two real bugs found and fixed
 
 Wired `GOOGLE_CLOUD_PROJECT` to a real GCP project (EduFX, GenAI App Builder credit scope —
