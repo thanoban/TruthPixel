@@ -45,6 +45,20 @@ class FusionResult(BaseModel):
     fusion_version: str = "weighted-avg-0.1"
 
 
+class UsageProviderBreakdown(BaseModel):
+    requests: int = Field(ge=0)
+    failed_requests: int = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    estimated_cost_usd: float = Field(ge=0)
+    operations: dict[str, int] = Field(default_factory=dict)
+    models: list[str] = Field(default_factory=list)
+
+
+class AggregatedUsageProviderBreakdown(UsageProviderBreakdown):
+    claim_count: int = Field(ge=0)
+
+
 class ClaimContext(BaseModel):
     order_id: str = ""
     product_sku: str = ""
@@ -102,6 +116,33 @@ class ClaimArtifact(BaseModel):
     storage_backend: str
     download_path: str
     created_at: datetime
+
+
+class ClaimUsageSummary(BaseModel):
+    claim_id: str
+    tenant_id: str | None = None
+    outcome: str = ""
+    total_external_requests: int = Field(ge=0)
+    failed_external_requests: int = Field(ge=0)
+    total_input_tokens: int = Field(ge=0)
+    total_output_tokens: int = Field(ge=0)
+    estimated_cost_usd: float = Field(ge=0)
+    providers: dict[str, UsageProviderBreakdown] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class TenantUsageSummary(BaseModel):
+    tenant_id: str | None = None
+    total_claims: int = Field(ge=0)
+    claims_with_usage: int = Field(ge=0)
+    claims_with_failed_external_requests: int = Field(ge=0)
+    total_external_requests: int = Field(ge=0)
+    failed_external_requests: int = Field(ge=0)
+    total_input_tokens: int = Field(ge=0)
+    total_output_tokens: int = Field(ge=0)
+    estimated_cost_usd: float = Field(ge=0)
+    providers: dict[str, AggregatedUsageProviderBreakdown] = Field(default_factory=dict)
 
 
 class ClaimQueueStatus(BaseModel):

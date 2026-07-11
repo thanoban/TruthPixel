@@ -39,8 +39,10 @@ from .schemas import (
     ClaimDecisionRequest,
     ClaimListItem,
     ClaimReport,
+    ClaimUsageSummary,
     IssuedApiKeyResponse,
     StoredClaim,
+    TenantUsageSummary,
     TenantCreateRequest,
     TenantResponse,
 )
@@ -54,10 +56,13 @@ from .storage import (
     get_artifact_record,
     get_claim,
     get_claim_audit_events,
+    get_claim_usage_summary,
     get_claim_queue_status,
+    get_tenant_usage_summary,
     init_db,
     list_claim_artifacts,
     list_claims,
+    list_tenant_usage_summaries,
     mark_claim_failed,
     record_decision,
     set_claim_task_info,
@@ -339,6 +344,19 @@ async def get_claim_audit(claim_id: str, auth: TenantAuth) -> list[AuditEvent]:
     return get_claim_audit_events(claim_id, tenant_id=auth.tenant_id)
 
 
+@app.get("/v1/claims/{claim_id}/usage", response_model=ClaimUsageSummary)
+async def get_claim_usage(claim_id: str, auth: TenantAuth) -> ClaimUsageSummary:
+    usage = get_claim_usage_summary(claim_id, tenant_id=auth.tenant_id)
+    if usage is None:
+        raise HTTPException(404, "claim not found")
+    return usage
+
+
+@app.get("/v1/usage/summary", response_model=TenantUsageSummary)
+async def get_tenant_usage(auth: TenantAuth) -> TenantUsageSummary:
+    return get_tenant_usage_summary(auth.tenant_id)
+
+
 @app.get("/v1/claims/{claim_id}/artifacts", response_model=list[ClaimArtifact])
 async def get_claim_artifacts(claim_id: str, auth: TenantAuth) -> list[ClaimArtifact]:
     artifacts = list_claim_artifacts(claim_id, tenant_id=auth.tenant_id)
@@ -429,3 +447,33 @@ async def issue_api_key_route(tenant_id: str, request: ApiKeyCreateRequest) -> I
     if issued is None:
         raise HTTPException(404, "tenant not found")
     return issued
+
+
+@app.get(
+    "/v1/admin/claims/{claim_id}/usage",
+    response_model=ClaimUsageSummary,
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_get_claim_usage(claim_id: str) -> ClaimUsageSummary:
+    usage = get_claim_usage_summary(claim_id)
+    if usage is None:
+        raise HTTPException(404, "claim not found")
+    return usage
+
+
+@app.get(
+    "/v1/admin/tenants/{tenant_id}/usage/summary",
+    response_model=TenantUsageSummary,
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_get_tenant_usage(tenant_id: str) -> TenantUsageSummary:
+    return get_tenant_usage_summary(tenant_id)
+
+
+@app.get(
+    "/v1/admin/usage/summary",
+    response_model=list[TenantUsageSummary],
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_list_usage_summaries() -> list[TenantUsageSummary]:
+    return list_tenant_usage_summaries()

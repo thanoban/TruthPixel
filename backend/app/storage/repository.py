@@ -12,25 +12,30 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..config import get_settings
 from ..schemas import (
     ArtifactKind,
+    AggregatedUsageProviderBreakdown,
     AuditEvent,
     ClaimArtifact,
     ClaimDecision,
     ClaimDecisionRequest,
     ClaimListItem,
     ClaimReport,
+    ClaimUsageSummary,
     ClaimQueueStatus,
     ClaimContext,
     ClaimStatus,
     FusionResult,
     IssuedApiKeyResponse,
     StoredClaim,
+    TenantUsageSummary,
     TenantResponse,
+    UsageProviderBreakdown,
 )
 from .models import (
     ApiKeyRecord,
     ArtifactRecord,
     AuditEventRecord,
     ClaimRecord,
+    ClaimUsageSummaryRecord,
     RateLimitEventRecord,
     TenantRecord,
     utc_now,
@@ -186,6 +191,48 @@ def _tenant_to_schema(record: TenantRecord) -> TenantResponse:
     )
 
 
+def _empty_usage_provider_dict() -> dict[str, UsageProviderBreakdown]:
+    return {}
+
+
+def _claim_usage_to_schema(record: ClaimUsageSummaryRecord) -> ClaimUsageSummary:
+    providers_payload = record.providers_json if isinstance(record.providers_json, dict) else {}
+    return ClaimUsageSummary(
+        claim_id=record.claim_id,
+        tenant_id=record.tenant_id,
+        outcome=record.outcome,
+        total_external_requests=record.total_external_requests,
+        failed_external_requests=record.failed_external_requests,
+        total_input_tokens=record.total_input_tokens,
+        total_output_tokens=record.total_output_tokens,
+        estimated_cost_usd=round(float(record.estimated_cost_usd), 8),
+        providers={
+            name: UsageProviderBreakdown.model_validate(payload)
+            for name, payload in sorted(providers_payload.items())
+        },
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _empty_claim_usage_summary(
+    *, claim_id: str, tenant_id: str | None, created_at: datetime, updated_at: datetime, outcome: str = ""
+) -> ClaimUsageSummary:
+    return ClaimUsageSummary(
+        claim_id=claim_id,
+        tenant_id=tenant_id,
+        outcome=outcome,
+        total_external_requests=0,
+        failed_external_requests=0,
+        total_input_tokens=0,
+        total_output_tokens=0,
+        estimated_cost_usd=0.0,
+        providers=_empty_usage_provider_dict(),
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
 def create_pending_claim(
     claim_id: str,
     context: ClaimContext,
@@ -321,6 +368,43 @@ def create_or_update_claim(report: ClaimReport, tenant_id: str | None = None) ->
         return _claim_to_schema(record)
 
 
+def upsert_claim_usage_summary(
+    *,
+    claim_id: str,
+    tenant_id: str | None,
+    outcome: str,
+    summary: dict[str, Any],
+) -> ClaimUsageSummary | None:
+    with session_scope() as session:
+        claim = session.get(ClaimRecord, claim_id)
+        if claim is None:
+            return None
+
+        effective_tenant_id = tenant_id if tenant_id is not None else claim.tenant_id
+        record = session.get(ClaimUsageSummaryRecord, claim_id)
+        if record is None:
+            record = ClaimUsageSummaryRecord(claim_id=claim_id)
+            session.add(record)
+
+        record.tenant_id = effective_tenant_id
+        record.outcome = (outcome or "")[:40]
+        record.total_external_requests = max(0, int(summary.get("total_external_requests", 0) or 0))
+        record.failed_external_requests = max(
+            0, int(summary.get("failed_external_requests", 0) or 0)
+        )
+        record.total_input_tokens = max(0, int(summary.get("total_input_tokens", 0) or 0))
+        record.total_output_tokens = max(0, int(summary.get("total_output_tokens", 0) or 0))
+        record.estimated_cost_usd = round(
+            max(0.0, float(summary.get("estimated_cost_usd", 0.0) or 0.0)),
+            8,
+        )
+        providers_payload = summary.get("providers", {})
+        record.providers_json = providers_payload if isinstance(providers_payload, dict) else {}
+        session.flush()
+        session.refresh(record)
+        return _claim_usage_to_schema(record)
+
+
 def get_claim(claim_id: str, tenant_id: str | None = None) -> StoredClaim | None:
     with session_scope() as session:
         record = session.get(ClaimRecord, claim_id)
@@ -329,6 +413,151 @@ def get_claim(claim_id: str, tenant_id: str | None = None) -> StoredClaim | None
         if tenant_id is not None and record.tenant_id != tenant_id:
             return None
         return _claim_to_schema(record) if record else None
+
+
+def get_claim_usage_summary(claim_id: str, tenant_id: str | None = None) -> ClaimUsageSummary | None:
+    with session_scope() as session:
+        claim = session.get(ClaimRecord, claim_id)
+        if claim is None:
+            return None
+        if tenant_id is not None and claim.tenant_id != tenant_id:
+            return None
+
+        record = session.get(ClaimUsageSummaryRecord, claim_id)
+        if record is None:
+            return _empty_claim_usage_summary(
+                claim_id=claim.claim_id,
+                tenant_id=claim.tenant_id,
+                created_at=claim.created_at,
+                updated_at=claim.updated_at,
+                outcome=claim.status,
+            )
+        return _claim_usage_to_schema(record)
+
+
+def _aggregate_usage_providers(
+    summaries: list[ClaimUsageSummary],
+) -> dict[str, AggregatedUsageProviderBreakdown]:
+    aggregate: dict[str, dict[str, Any]] = {}
+    for summary in summaries:
+        for provider_name, provider in summary.providers.items():
+            bucket = aggregate.setdefault(
+                provider_name,
+                {
+                    "requests": 0,
+                    "failed_requests": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "estimated_cost_usd": 0.0,
+                    "operations": {},
+                    "models": set(),
+                    "claim_ids": set(),
+                },
+            )
+            bucket["requests"] += provider.requests
+            bucket["failed_requests"] += provider.failed_requests
+            bucket["input_tokens"] += provider.input_tokens
+            bucket["output_tokens"] += provider.output_tokens
+            bucket["estimated_cost_usd"] = round(
+                float(bucket["estimated_cost_usd"]) + float(provider.estimated_cost_usd),
+                8,
+            )
+            for operation, count in provider.operations.items():
+                bucket["operations"][operation] = bucket["operations"].get(operation, 0) + count
+            bucket["models"].update(provider.models)
+            bucket["claim_ids"].add(summary.claim_id)
+
+    return {
+        provider_name: AggregatedUsageProviderBreakdown(
+            requests=payload["requests"],
+            failed_requests=payload["failed_requests"],
+            input_tokens=payload["input_tokens"],
+            output_tokens=payload["output_tokens"],
+            estimated_cost_usd=round(float(payload["estimated_cost_usd"]), 8),
+            operations=dict(sorted(payload["operations"].items())),
+            models=sorted(payload["models"]),
+            claim_count=len(payload["claim_ids"]),
+        )
+        for provider_name, payload in sorted(aggregate.items())
+    }
+
+
+def _tenant_usage_summary(
+    *,
+    tenant_id: str | None,
+    claims: list[ClaimRecord],
+    usage_records: list[ClaimUsageSummaryRecord],
+) -> TenantUsageSummary:
+    claim_summaries = [_claim_usage_to_schema(record) for record in usage_records]
+    return TenantUsageSummary(
+        tenant_id=tenant_id,
+        total_claims=len(claims),
+        claims_with_usage=len(usage_records),
+        claims_with_failed_external_requests=sum(
+            1 for record in usage_records if record.failed_external_requests > 0
+        ),
+        total_external_requests=sum(record.total_external_requests for record in usage_records),
+        failed_external_requests=sum(record.failed_external_requests for record in usage_records),
+        total_input_tokens=sum(record.total_input_tokens for record in usage_records),
+        total_output_tokens=sum(record.total_output_tokens for record in usage_records),
+        estimated_cost_usd=round(
+            sum(float(record.estimated_cost_usd) for record in usage_records),
+            8,
+        ),
+        providers=_aggregate_usage_providers(claim_summaries),
+    )
+
+
+def get_tenant_usage_summary(tenant_id: str | None) -> TenantUsageSummary:
+    with session_scope() as session:
+        claim_stmt = select(ClaimRecord).order_by(
+            ClaimRecord.created_at.asc(),
+            ClaimRecord.claim_id.asc(),
+        )
+        usage_stmt = select(ClaimUsageSummaryRecord)
+        if tenant_id is None:
+            claim_stmt = claim_stmt.where(ClaimRecord.tenant_id.is_(None))
+            usage_stmt = usage_stmt.where(ClaimUsageSummaryRecord.tenant_id.is_(None))
+        else:
+            claim_stmt = claim_stmt.where(ClaimRecord.tenant_id == tenant_id)
+            usage_stmt = usage_stmt.where(ClaimUsageSummaryRecord.tenant_id == tenant_id)
+
+        claims = session.execute(claim_stmt).scalars().all()
+        usage_records = session.execute(usage_stmt).scalars().all()
+        return _tenant_usage_summary(
+            tenant_id=tenant_id,
+            claims=claims,
+            usage_records=usage_records,
+        )
+
+
+def list_tenant_usage_summaries() -> list[TenantUsageSummary]:
+    with session_scope() as session:
+        claims = session.execute(
+            select(ClaimRecord).order_by(ClaimRecord.created_at.asc(), ClaimRecord.claim_id.asc())
+        ).scalars().all()
+        usage_records = session.execute(select(ClaimUsageSummaryRecord)).scalars().all()
+
+        claims_by_tenant: dict[str | None, list[ClaimRecord]] = {}
+        for claim in claims:
+            claims_by_tenant.setdefault(claim.tenant_id, []).append(claim)
+
+        usage_by_tenant: dict[str | None, list[ClaimUsageSummaryRecord]] = {}
+        for record in usage_records:
+            usage_by_tenant.setdefault(record.tenant_id, []).append(record)
+
+        tenant_ids = sorted(
+            set(claims_by_tenant) | set(usage_by_tenant),
+            key=lambda value: (value is None, value or ""),
+        )
+        return [
+            _tenant_usage_summary(
+                tenant_id=tenant_id,
+                claims=claims_by_tenant.get(tenant_id, []),
+                usage_records=usage_by_tenant.get(tenant_id, []),
+            )
+            for tenant_id in tenant_ids
+        ]
 
 
 def get_claim_queue_status(claim_id: str, tenant_id: str | None = None) -> ClaimQueueStatus | None:

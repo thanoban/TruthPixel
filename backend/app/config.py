@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     hf_api_token: str = ""
     l1_hf_models: str = "Ateeqq/ai-vs-human-image-detector,Nahrawy/AIorNot"
     hf_inference_timeout_seconds: float = 30.0
+    hf_request_cost_usd: float = 0.0
     l2_trufor_repo_dir: str = ""
     l2_trufor_model_file: str = ""
     l2_trufor_python_executable: str = ""
@@ -103,6 +104,7 @@ class Settings(BaseSettings):
     sightengine_api_user: str = ""
     sightengine_api_secret: str = ""
     sightengine_timeout_seconds: float = 15.0
+    sightengine_request_cost_usd: float = 0.0
     c2patool_path: str = "c2patool"
     c2patool_timeout_seconds: float = 8.0
     c2patool_trust_anchors: str = ""

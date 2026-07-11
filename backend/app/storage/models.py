@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -44,6 +44,9 @@ class ClaimRecord(Base):
     )
     artifacts: Mapped[list["ArtifactRecord"]] = relationship(
         back_populates="claim", cascade="all, delete-orphan"
+    )
+    usage_summary: Mapped["ClaimUsageSummaryRecord | None"] = relationship(
+        back_populates="claim", cascade="all, delete-orphan", uselist=False
     )
     tenant: Mapped["TenantRecord | None"] = relationship(back_populates="claims")
 
@@ -122,3 +125,25 @@ class ArtifactRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     claim: Mapped[ClaimRecord] = relationship(back_populates="artifacts")
+
+
+class ClaimUsageSummaryRecord(Base):
+    __tablename__ = "claim_usage_summaries"
+
+    claim_id: Mapped[str] = mapped_column(ForeignKey("claims.claim_id"), primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tenants.tenant_id"), nullable=True, index=True
+    )
+    outcome: Mapped[str] = mapped_column(String(40), default="")
+    total_external_requests: Mapped[int] = mapped_column(Integer, default=0)
+    failed_external_requests: Mapped[int] = mapped_column(Integer, default=0)
+    total_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    providers_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    claim: Mapped[ClaimRecord] = relationship(back_populates="usage_summary")

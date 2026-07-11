@@ -36,9 +36,11 @@ def test_init_db_backfills_columns_missing_from_a_pre_existing_table(monkeypatch
 
     engine = get_engine()
     columns = {col["name"] for col in inspect(engine).get_columns("claims")}
+    tables = set(inspect(engine).get_table_names())
     assert "tenant_id" in columns
     assert "status" in columns
     assert "decision_json" in columns
+    assert "claim_usage_summaries" in tables
 
     # The actual symptom from live verification: this query used to raise
     # OperationalError: no such column: claims.tenant_id.
@@ -78,7 +80,7 @@ def test_init_db_stamps_alembic_version_at_head(tmp_path, monkeypatch):
     engine = get_engine()
     with engine.connect() as conn:
         rows = conn.exec_driver_sql("SELECT version_num FROM alembic_version").fetchall()
-    assert [row[0] for row in rows] == ["0001"]
+    assert [row[0] for row in rows] == ["0002"]
 
     reset_storage_state()
     get_settings.cache_clear()

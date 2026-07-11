@@ -1,6 +1,7 @@
 import httpx
 
 from ..config import get_settings
+from ..observability import record_external_usage
 from ..schemas import ClaimContext, Layer, SignalResult
 from .base import Analyzer
 
@@ -62,10 +63,22 @@ class RecaptureAnalyzer(Analyzer):
                 response = await client.post(SIGHTENGINE_CHECK_URL, data=data, files=files)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
+            record_external_usage(
+                provider="sightengine",
+                operation="l3_recapture_check",
+                model=SIGHTENGINE_MODEL,
+                failed=True,
+            )
             raise RuntimeError(f"Sightengine request failed: {exc}") from exc
 
         payload = response.json()
         if payload.get("status") != "success":
+            record_external_usage(
+                provider="sightengine",
+                operation="l3_recapture_check",
+                model=SIGHTENGINE_MODEL,
+                failed=True,
+            )
             raise RuntimeError(f"Sightengine API failure: {_extract_api_error(payload)}")
 
         recapture = payload.get("recapture")
@@ -75,7 +88,23 @@ class RecaptureAnalyzer(Analyzer):
         try:
             score = max(0.0, min(1.0, float(recapture["score"])))
         except (TypeError, ValueError) as exc:
+            record_external_usage(
+                provider="sightengine",
+                operation="l3_recapture_check",
+                model=SIGHTENGINE_MODEL,
+                failed=True,
+            )
             raise RuntimeError("Sightengine returned a non-numeric recapture score") from exc
+
+        record_external_usage(
+            provider="sightengine",
+            operation="l3_recapture_check",
+            model=SIGHTENGINE_MODEL,
+            estimated_cost_usd=max(
+                0.0,
+                float(getattr(settings, "sightengine_request_cost_usd", 0.0)),
+            ),
+        )
 
         return SignalResult(
             layer=self.layer,

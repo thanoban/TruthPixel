@@ -24,6 +24,7 @@ from statistics import pstdev
 
 import httpx
 
+from .config import get_settings
 from .observability import record_external_usage
 
 HF_INFERENCE_BASE = "https://api-inference.huggingface.co/models"
@@ -118,6 +119,7 @@ async def _query_member(
     client: httpx.AsyncClient, model: str, image: bytes, token: str
 ) -> MemberResult:
     headers = {"Authorization": f"Bearer {token}"}
+    settings = get_settings()
     try:
         response = await client.post(
             f"{HF_INFERENCE_BASE}/{model}", content=image, headers=headers
@@ -164,7 +166,12 @@ async def _query_member(
             failed=True,
         )
         return MemberResult(model=model, error="no mappable AI/real label", raw=payload)
-    record_external_usage(provider="hf_inference", operation="l1_member_query", model=model)
+    record_external_usage(
+        provider="hf_inference",
+        operation="l1_member_query",
+        model=model,
+        estimated_cost_usd=max(0.0, float(getattr(settings, "hf_request_cost_usd", 0.0))),
+    )
     return MemberResult(model=model, ai_probability=probability, raw=payload)
 
 

@@ -92,13 +92,15 @@ def record_vertex_usage(*, operation: str, model_name: str, prompt_text: str, re
         or _text_token_estimate(_response_text(response))
     )
     estimated_cost_usd = 0.0
-    if settings.vertex_input_cost_per_1m_tokens > 0:
+    input_cost_per_million = float(getattr(settings, "vertex_input_cost_per_1m_tokens", 0.0))
+    output_cost_per_million = float(getattr(settings, "vertex_output_cost_per_1m_tokens", 0.0))
+    if input_cost_per_million > 0:
         estimated_cost_usd += (
-            input_tokens * settings.vertex_input_cost_per_1m_tokens / 1_000_000
+            input_tokens * input_cost_per_million / 1_000_000
         )
-    if settings.vertex_output_cost_per_1m_tokens > 0:
+    if output_cost_per_million > 0:
         estimated_cost_usd += (
-            output_tokens * settings.vertex_output_cost_per_1m_tokens / 1_000_000
+            output_tokens * output_cost_per_million / 1_000_000
         )
     record_external_usage(
         provider="vertex_ai",

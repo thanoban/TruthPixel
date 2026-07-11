@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from contextvars import ContextVar
 from uuid import uuid4
 
@@ -12,6 +13,11 @@ _trace_id_var: ContextVar[str | None] = ContextVar("truthpixel_trace_id", defaul
 _claim_id_var: ContextVar[str | None] = ContextVar("truthpixel_claim_id", default=None)
 _tenant_id_var: ContextVar[str | None] = ContextVar("truthpixel_tenant_id", default=None)
 _usage_summary_var: ContextVar[dict | None] = ContextVar("truthpixel_usage_summary", default=None)
+_SAFE_LABEL_RE = re.compile(r"[^a-z0-9._:/+-]+")
+_MAX_PROVIDER_LABEL_LENGTH = 40
+_MAX_OPERATION_LABEL_LENGTH = 60
+_MAX_MODEL_LABEL_LENGTH = 120
+_MAX_MODELS_PER_PROVIDER = 12
 
 
 def ensure_trace_id(existing: str | None = None) -> str:
@@ -63,6 +69,14 @@ def _fresh_usage_summary() -> dict:
     }
 
 
+def _safe_usage_label(value: str, *, fallback: str, max_length: int) -> str:
+    normalized = (value or "").strip().lower()
+    normalized = _SAFE_LABEL_RE.sub("_", normalized).strip("._:-/+")
+    if not normalized:
+        normalized = fallback
+    return normalized[:max_length]
+
+
 def record_external_usage(
     *,
     provider: str,
@@ -74,6 +88,21 @@ def record_external_usage(
     output_tokens: int = 0,
     estimated_cost_usd: float = 0.0,
 ) -> None:
+    safe_provider = _safe_usage_label(
+        provider,
+        fallback="unknown_provider",
+        max_length=_MAX_PROVIDER_LABEL_LENGTH,
+    )
+    safe_operation = _safe_usage_label(
+        operation,
+        fallback="unknown_operation",
+        max_length=_MAX_OPERATION_LABEL_LENGTH,
+    )
+    safe_model = _safe_usage_label(
+        model,
+        fallback="",
+        max_length=_MAX_MODEL_LABEL_LENGTH,
+    )
     summary = _usage_summary_var.get()
     if summary is None:
         summary = _fresh_usage_summary()
@@ -89,7 +118,7 @@ def record_external_usage(
     )
 
     provider_bucket = summary["providers"].setdefault(
-        provider,
+        safe_provider,
         {
             "requests": 0,
             "failed_requests": 0,
@@ -108,11 +137,15 @@ def record_external_usage(
         float(provider_bucket["estimated_cost_usd"]) + max(0.0, float(estimated_cost_usd)),
         8,
     )
-    provider_bucket["operations"][operation] = provider_bucket["operations"].get(operation, 0) + max(
-        0, int(request_count)
+    provider_bucket["operations"][safe_operation] = (
+        provider_bucket["operations"].get(safe_operation, 0) + max(0, int(request_count))
     )
-    if model and model not in provider_bucket["models"]:
-        provider_bucket["models"].append(model)
+    if (
+        safe_model
+        and safe_model not in provider_bucket["models"]
+        and len(provider_bucket["models"]) < _MAX_MODELS_PER_PROVIDER
+    ):
+        provider_bucket["models"].append(safe_model)
 
 
 def usage_summary_fields() -> dict:
@@ -138,10 +171,34 @@ def usage_summary_fields() -> dict:
     }
 
 
+def persist_usage_summary(
+    *,
+    outcome: str = "",
+    reason: str = "",
+) -> None:
+    fields = context_fields()
+    claim_id = fields.get("claim_id")
+    if not claim_id:
+        return
+
+    from .storage import upsert_claim_usage_summary
+
+    upsert_claim_usage_summary(
+        claim_id=claim_id,
+        tenant_id=fields.get("tenant_id"),
+        outcome=(outcome or reason or "unknown")[:40],
+        summary=usage_summary_fields(),
+    )
+
+
 def log_event(logger: logging.Logger, event: str, **fields) -> None:
     payload = {"event": event, **context_fields(), **fields}
     logger.info(json.dumps(payload, sort_keys=True, default=str))
 
 
 def log_usage_summary(logger: logging.Logger, event: str = "claim_usage_summary", **fields) -> None:
+    persist_usage_summary(
+        outcome=str(fields.get("outcome", "")),
+        reason=str(fields.get("reason", "")),
+    )
     log_event(logger, event, **usage_summary_fields(), **fields)
