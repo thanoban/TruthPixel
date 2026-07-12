@@ -601,7 +601,7 @@ tier, no relation to any Azure/GCP credit.
 - [ ] Cell 4 — COCO fallback real photos pulled in
 - [ ] Cell 5 — SDXL bucket generated with 20+ prompts; `del pipe` / `empty_cache()` confirmed
 - [ ] Cell 6 — sanity check: total ≥ 9k samples, non-zero in every split
-- [x] Cell 7 — training completes; epoch JSON lines printed (confirmed 2026-07-09, `run_20260709_2042`, 5 epochs, best val accuracy 0.8988)
+- [x] Cell 7 — training completes; epoch JSON lines printed (confirmed 2026-07-09, `run_20260709_2042`, 5 epochs, best val accuracy 0.8907 in the committed checkpoint metadata)
 - [x] Cell 8 — `eval_report.json` printed; held-out `screenshot_sim` AUROC recorded — **0.9688 AUROC / 0.8959 accuracy** on held-out generators (sdxl, midjourney, flux), robustness matrix holds up across all 4 variants (0.9688–0.9728 AUROC, pristine through social_roundtrip)
 
 **Before closing the session:**

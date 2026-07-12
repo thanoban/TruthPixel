@@ -3,6 +3,7 @@
 > What we train, what we don't, and how we prove it honestly.
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 > [COMPETITORS.md](COMPETITORS.md) · [AGENTS.md](AGENTS.md) · [ROADMAP.md](ROADMAP.md) ·
+> [BENCHMARK.md](BENCHMARK.md) ·
 > [COLAB_TRAINING.md](COLAB_TRAINING.md) (no local GPU — train T1 on Colab, data lives in Drive) ·
 > [KAGGLE_TRAINING.md](KAGGLE_TRAINING.md) (same, on Kaggle's free tier instead)
 

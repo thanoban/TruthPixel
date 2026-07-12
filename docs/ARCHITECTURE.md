@@ -3,7 +3,8 @@
 > Master design doc. Draft v0.3 — 2026-07-08.
 >
 > Companion docs: [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) ·
-> [AGENTS.md](AGENTS.md) · [USE_CASES.md](USE_CASES.md) · [ROADMAP.md](ROADMAP.md)
+> [AGENTS.md](AGENTS.md) · [USE_CASES.md](USE_CASES.md) · [ROADMAP.md](ROADMAP.md) ·
+> [BENCHMARK.md](BENCHMARK.md) · [README.md](README.md) (docs index / project references)
 
 ## Repo status note
 

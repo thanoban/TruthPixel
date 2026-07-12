@@ -2,7 +2,7 @@
 
 > Concrete, checkable milestones. Local-first development; cloud only when it earns its cost.
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
-> [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [AGENTS.md](AGENTS.md) ·
+> [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [BENCHMARK.md](BENCHMARK.md) · [AGENTS.md](AGENTS.md) ·
 > [CORRECTIONS.md](CORRECTIONS.md) (full-system audit log — bugs found/fixed each pass)
 >
 > **Current development block:** [EXECUTION_PLAN.md](EXECUTION_PLAN.md) (2026-07-10) — the
