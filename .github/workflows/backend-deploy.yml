@@ -11,9 +11,15 @@ name: Backend Deploy
 # service-account JSON key sitting in a GitHub secret indefinitely -- this is GCP's recommended
 # approach for CI/CD. One-time setup (run once, from a machine with `gcloud` authenticated to
 # the target project -- both artifactregistry.googleapis.com and run.googleapis.com must be
-# enabled on the project first):
+# enabled on the project first, and the project needs an active billing account linked --
+# neither Artifact Registry nor Cloud Run will enable without one, even for free-tier usage):
 #
-#   PROJECT_ID=<your-gcp-project-id>          # e.g. responsive-sun-491204-e0
+# Done 2026-07-12 for projectbucket-501814 (this repo's shared GCP project -- responsive-
+# sun-491204-e0 was the original target but its billing account had hit GCP's 5-project
+# billing-link quota, so billing was moved to projectbucket-501814 instead; see
+# docs/CORRECTIONS.md). Re-run this block only if the infra needs to be recreated elsewhere.
+#
+#   PROJECT_ID=<your-gcp-project-id>          # e.g. projectbucket-501814
 #   PROJECT_NUMBER=<your-gcp-project-number>  # gcloud projects describe $PROJECT_ID --format='value(projectNumber)'
 #   REGION=us-central1                        # match GOOGLE_CLOUD_LOCATION used for Vertex AI
 #   REPO=truthpixel                           # Artifact Registry repo name

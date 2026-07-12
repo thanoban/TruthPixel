@@ -4,6 +4,60 @@
 > an honest finished-vs-remaining snapshot. Each entry is dated; newest first. This is an audit
 > trail, not a plan — see [ROADMAP.md](ROADMAP.md) for the phase-by-phase plan itself.
 
+## 2026-07-12 (4) — GCP deploy infra provisioned; billing quota forced a project move
+
+Set up the one-time GCP infrastructure `backend-deploy.yml`'s own comment block documents
+(Workload Identity Federation, deploy service account, Artifact Registry repo), since the
+workflow had never actually been run against real GCP config — every prior run's
+`deploy-gcp` job was correctly no-op'd (gated on `secrets.GCP_WORKLOAD_IDENTITY_PROVIDER`
+being unset), which is expected, working-as-designed behavior, not a bug.
+
+**Real blocker found: GCP billing accounts have a default project-link quota.** The billing
+account backing `responsive-sun-491204-e0` (the project TruthPixel's Vertex AI config
+already pointed at) had already hit that quota from unrelated projects — a brand-new project
+(`projectbucket-501814`, created because the user's GCP *project-creation* quota was
+separately exhausted) couldn't be billing-linked at all (`gcloud billing projects link` →
+`FAILED_PRECONDITION: Cloud billing quota exceeded`). Neither Artifact Registry nor Cloud
+Run will enable without an active billing link, even for free-tier usage — this isn't
+optional for this deploy path.
+
+**Resolution:** unlinked billing from `responsive-sun-491204-e0` (user's explicit choice —
+that project is being retired in favor of `projectbucket-501814` as the shared home for all
+university projects going forward, not TruthPixel-specific), linked the same billing account
+to `projectbucket-501814` instead, then built the deploy infrastructure there: an Artifact
+Registry repo, a dedicated deploy service account (`run.admin` /
+`artifactregistry.writer` / `iam.serviceAccountUser` — least privilege for this workflow, not
+project-wide access), and a Workload Identity Pool + OIDC provider whose attribute-condition
+restricts token minting to `assertion.repository=='thanoban/TruthPixel'` specifically — no
+other repo, even one under the same GitHub account, can use this identity. Exact resource
+names/IDs given to the user directly (not committed here — this repo is public, and the
+full identity-provider resource path plus service-account email together are more
+infrastructure fingerprinting than a public doc needs to expose).
+
+`GOOGLE_CLOUD_PROJECT` in `backend/.env` (gitignored, not committed) migrated from
+`responsive-sun-491204-e0` to `projectbucket-501814` — unlinking billing broke Vertex AI on
+the old project too, since that also requires active billing. **Verified live**: a real
+claim submission got a real Gemini response back through `semantic_inspector` on the new
+project, not a stub/fallback. Not verified: whether the old project's "GenAI App Builder"
+promo credits carry over to the new project under the same billing account — some GCP
+credit grants are project-scoped rather than account-scoped. Watch the first real bill.
+
+**Six GitHub Actions repo secrets still need to be set manually** (Settings → Secrets and
+variables → Actions) — `gh` isn't authenticated in this environment, so they couldn't be set
+via CLI. Names only (values given to the user directly, not committed):
+`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ARTIFACT_REPO`, `CLOUD_RUN_SERVICE_NAME`,
+`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` — see `backend-deploy.yml`'s own
+setup comment for what each one is.
+
+**Separately, still unresolved:** every `backend-deploy.yml` run observed so far (going back
+to commits that predate this session) completes in 0 seconds with 0 jobs and 0 check-runs —
+the signature of a workflow-schema validation failure GitHub's own parser catches before
+scheduling any job (a generic YAML parse via PyYAML succeeds fine, so it's not basic syntax).
+This affects the *whole* workflow, including `build-and-push`, which doesn't depend on any
+GCP secret — so setting the six secrets above will not by itself fix deploys. Diagnosis is
+blocked on either `gh auth login` (to pull the actual GitHub-rendered error) or manually
+checking the failing run's page in the Actions tab for the exact error banner text.
+
 ## 2026-07-12 (3) — Supabase wired live: 5 real bugs found only by testing against real Postgres
 
 Followed up on 2026-07-12 (2)'s decision: user provisioned a real Supabase project and
