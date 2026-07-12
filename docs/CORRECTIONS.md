@@ -4,6 +4,144 @@
 > an honest finished-vs-remaining snapshot. Each entry is dated; newest first. This is an audit
 > trail, not a plan — see [ROADMAP.md](ROADMAP.md) for the phase-by-phase plan itself.
 
+## 2026-07-12 (3) — Supabase wired live: 5 real bugs found only by testing against real Postgres
+
+Followed up on 2026-07-12 (2)'s decision: user provisioned a real Supabase project and
+provided pooled connection strings, asked to "do all db works." Wired `DATABASE_URL` +
+new `DIRECT_URL` into `backend/.env`, ran real migrations against it, and exercised the app
+against it directly (not just via tests that isolate their own SQLite file). Every bug below
+was invisible in the existing SQLite-only test suite and only surfaced against a real
+Postgres connection — the whole point of actually doing this instead of leaving it as a
+documented decision.
+
+**1. `ValueError: invalid interpolation syntax` from Alembic's `Config`.** Alembic's
+`Config.set_main_option` goes through stdlib `configparser`, which treats a literal `%` as
+the start of a `%(...)s` reference. The Supabase password's URL-encoded `%40` (`@`) tripped
+it. Fixed by escaping `%` → `%%` before `set_main_option` (`backend/alembic/env.py`) —
+`configparser`'s interpolation un-escapes `%%` back to `%` on every read, so it round-trips.
+
+**2. `failed to resolve host 'db.<ref>.supabase.co'`.** Supabase's direct hostname is
+IPv6-only on this network; doesn't resolve over IPv4. Fixed by using the pooler hostname
+(`aws-0-<region>.pooler.supabase.com`) instead, which is IPv4-compatible — this also lines
+up with the connection-pooling reasoning from (2).
+
+**3. Added `DIRECT_URL` as a first-class setting** (`backend/app/config.py`,
+`backend/alembic/env.py`), Prisma-style: `DATABASE_URL` = transaction-mode pooler (port
+6543, for app traffic), `DIRECT_URL` = session-mode pooler (port 5432, for Alembic
+migrations only — DDL runs in one long transaction, which a transaction-mode pooler doesn't
+reliably support). `alembic/env.py` prefers `DIRECT_URL`, falling back to `DATABASE_URL`
+when unset (local SQLite, any non-pooled Postgres).
+
+**4. `psycopg.errors.ForeignKeyViolation` on `claims.tenant_id` — a real production bug,
+not a config issue.** `backend/app/auth.py`'s no-auth default path
+(`require_tenant_api_key()`, `allow_public_submission()`) returned the literal string
+`"local-dev"` as `tenant_id`, but no `tenants` row with that ID exists. This worked by
+accident on SQLite (no FK enforcement by default) and would have 500'd every unauthenticated
+claim submission in production the moment `API_AUTH_ENABLED=false` hit real Postgres. Fixed
+by changing both call sites to `tenant_id=None` — the schema's actual unscoped value
+(`claims.tenant_id` is a nullable FK) — and verified downstream code (`bind_claim_context`,
+repository filters) already handles `None` correctly. This is the reason `.env.example` had
+to be corrected too: it previously claimed `sslmode=require` was "mandatory," which is false
+(connection works without it) — removed the overclaim, documented what's actually required
+(driver prefix, pooler host, percent-encoding) instead.
+
+**5. Closed the systemic gap that let bug #4 hide for the project's whole lifetime: SQLite
+never enforced foreign keys.** `backend/app/storage/repository.py::get_engine()` now
+registers a `PRAGMA foreign_keys=ON` on every new SQLite connection (via SQLAlchemy's
+`event.listens_for(engine, "connect")`). This is deliberate defense-in-depth — local/CI
+tests now catch the exact class of bug that only a real Postgres connection caught before.
+Also added `connect_args={"prepare_threshold": None}` for any `postgresql://` URL (both
+`repository.py` and `alembic/env.py`) — psycopg3 auto-prepares statements by default, which
+breaks against a transaction-mode pooler (Supavisor hands out a different backend connection
+per transaction, so a statement prepared in one transaction is invalid in the next). This
+only bites after repeated real traffic, not the first few requests, so it's easy to ship
+without noticing — caught here by testing repeated calls against the real pooler, not by
+inspection.
+
+**Fallout from #5, expected and fixed (not a regression):** turning on SQLite FK enforcement
+immediately failed 4 tests that had been using arbitrary `tenant_id` strings with no backing
+`tenants` row — exactly the bug class in #4, just now caught locally too. 3 in
+`test_usage_reporting.py` fixed by seeding a real tenant via `create_tenant(...)` before
+claim creation. 1 in `test_forensics.py::test_persist_signal_artifacts_saves_heatmap` fixed
+by changing `tenant_id="local-dev"` to `tenant_id=None`, matching fix #4 exactly (this test
+was directly reproducing the pre-fix `auth.py` bug pattern).
+
+**Also caught and fixed: a self-inflicted 15-test regression** while making the `DIRECT_URL`
+change above. Adding `direct_url` to `Settings` without updating `conftest.py`'s stub-safe
+defaults meant tests overriding `DATABASE_URL` to their own isolated `tmp_path` SQLite file
+still inherited the real Supabase `DIRECT_URL` from `.env` — Alembic's `direct_url or
+database_url` preference silently ran migrations against (already-migrated) Supabase instead
+of the test's actual SQLite file, leaving it schema-less
+(`sqlite3.OperationalError: no such table: claims`). Fixed by adding
+`"DATABASE_URL": "sqlite:///./truthpixel.db"` and `"DIRECT_URL": ""` to `conftest.py`'s
+`_STUB_SAFE_ENV`.
+
+**Verified:** `alembic upgrade head` / `alembic current` against the real Supabase pooled
+connection reports `0001 (head)`; a standalone script directly exercising `app.storage`
+against the real connection confirmed create/read round-trips work through both the
+transaction pooler (app traffic) and session pooler (migrations); full backend suite is
+62/62 passing with SQLite FK enforcement active.
+
+**Correcting my own earlier overclaim in this same session:** I initially ran
+`test_db_migration.py`/`test_persistence_api.py` and reported them as verifying Supabase —
+wrong, both tests `monkeypatch.setenv("DATABASE_URL", ...)` to their own isolated tmp_path
+SQLite files, so they never touch Supabase regardless of `.env`. Corrected by writing a
+standalone script that actually connects to the real Supabase URL, which is what surfaced
+bug #4 above.
+
+## 2026-07-12 (2) — production DB decision: Supabase Postgres, not GCP
+
+User ruled out a GCP-hosted DB (Cloud SQL) despite `backend-deploy.yml` deploying to GCP
+Cloud Run — asked for "free and best," chose **Supabase** over Neon (the initial
+recommendation) after weighing both. Decision + rationale now in ROADMAP.md's standing
+decisions table. No backend code changes required: the app already used SQLAlchemy +
+Alembic against a generic `DATABASE_URL`, so this is a connection-string swap, not new
+integration code — `.env.example` documents the two things that would silently break the
+app if missed: (1) the driver prefix must be `postgresql+psycopg://` (psycopg3, what
+`requirements.txt` actually installs — a bare `postgresql://` resolves to psycopg2, which
+isn't installed, → `ModuleNotFoundError` at connect time, not at pip-install time, so it's
+an easy trap to hit only in production); (2) use Supabase's **pooler** port 6543
+(Supavisor, transaction mode), not the direct port 5432 — Cloud Run can scale to many
+concurrent container instances, each opening its own connection, and the direct port
+exhausts Postgres's connection limit fast under that pattern.
+
+**Also asked to "connect via MCP":** checked — no Supabase MCP server is connected in this
+environment (`ToolSearch` for "supabase" returned nothing). Supabase does publish one, but
+adding it is a client-side Claude Code MCP-config step outside this session, not something
+installable from within it. Proceeded without it — the app doesn't need an MCP server to
+talk to Postgres, just the connection string in `DATABASE_URL`, same as any other DB.
+
+**Not yet done — blocked on the user's actual Supabase project:** provisioning the project
+itself, running `alembic upgrade head` against the real pooled connection string (only
+SQLite has been verified against the baseline migration so far), and setting the real
+`DATABASE_URL` on the Cloud Run service. `.env.example`'s Supabase line is a template with
+placeholder `<project-ref>`/`<password>`/`<region>`, not a working credential.
+
+## 2026-07-12 — full-system pass: classical L2 fallback wired, repo currently green
+
+Ran the current repo fresh again: full `pytest -c pytest.ini` plus `next build` in both
+`webapp/` and `dashboard/`. Result: **green** — 69 tests passing and both frontend builds
+successful in the current checkout.
+
+Two previously open reality gaps are now closed in repo code:
+
+**1. The test-isolation regression described in 2026-07-10 (4) is fixed.** `backend/conftest.py`
+now forces heavy/external integrations off by default for tests, so the suite no longer reads
+real `backend/.env` Vertex/L1 settings and no longer drifts into live-call / checkpoint-load
+mode. This pass re-verified the fix live.
+
+**2. L2 is no longer a neutral stub outside of TruFor.** `backend/app/analyzers/l2_forensics.py`
+now uses precedence `TruFor -> classical CPU fallback`, calling
+`backend/app/forensics_classic.py` when TruFor is unconfigured. The fallback emits a real
+forensics heatmap through the existing artifact pipeline, with provider metadata and
+ELA/noise/JPEG-ghost evidence instead of the old neutral placeholder. Added targeted tests in
+`backend/tests/test_forensics.py` and `backend/tests/test_forensics_classic.py`; re-verified
+the persistence/API paths still pass.
+
+What remains from that earlier audit is no longer "fix test suite first" or "wire L2 at all" —
+the next meaningful accuracy work is **A1b external evaluation (CASIA v2)** and then the
+learned-fusion / synthetic-dataset items in `EXECUTION_PLAN.md`.
+
 ## 2026-07-10 (4) — full-system audit: test suite is currently broken, found live
 
 Ran the full backend suite fresh (not from memory) as part of a "what hasn't been built"

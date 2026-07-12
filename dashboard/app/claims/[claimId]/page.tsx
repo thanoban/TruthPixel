@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { API_URL, fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
+import { createSupabaseBrowserClient } from "../../lib/supabase-browser";
 import type { AuditEvent, ClaimArtifact, ReviewDecisionValue, StoredClaim } from "../../types";
 import {
   LAYER_LABELS,
@@ -21,11 +22,23 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(55);
-  const [reviewerId, setReviewerId] = useState("reviewer-1");
+  const [reviewerId, setReviewerId] = useState("");
   const [decision, setDecision] = useState<ReviewDecisionValue>("reject");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+
+  // Prefill from the signed-in Google identity (Supabase Auth session) instead of a free-text
+  // guess — ties the audit trail's reviewer_id to a real authenticated account. Still editable:
+  // a reviewer submitting on a colleague's behalf can override it.
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user?.email) {
+        setReviewerId(data.user.email);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

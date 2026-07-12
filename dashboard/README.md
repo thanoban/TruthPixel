@@ -28,6 +28,34 @@ turn `API_AUTH_ENABLED=true`, set `NEXT_PUBLIC_API_KEY` to a tenant key issued v
 sends it as `X-API-Key` on every request when present. Still missing: a tenant switcher (one
 key is baked in at build/env time, not selectable per-session in the UI).
 
+## Reviewer login (Google + email/password via Supabase Auth)
+
+This is a separate, independent auth layer from the tenant/API-key auth above — it gates
+*who can open this UI at all* (`middleware.ts`), not the backend's own API authorization.
+Every route except `/login` and `/auth/callback` redirects to `/login` without a valid
+Supabase session.
+
+Setup (one-time, in the Supabase project already used for `DATABASE_URL`/`DIRECT_URL`):
+
+1. **Email/password** is enabled by default in Supabase — nothing to configure. This is an
+   internal tool, so there's no public sign-up UI; provision reviewer accounts yourself via
+   Supabase dashboard → Authentication → Users → Add user.
+2. **Google provider:** Supabase dashboard → Authentication → Providers → Google → enable,
+   then paste a Google Cloud OAuth Client ID/Secret (Google Cloud Console → APIs & Services
+   → Credentials → Create OAuth client ID → Web application). Authorized redirect URI:
+   `https://<project-ref>.supabase.co/auth/v1/callback`. Authorized JavaScript origin for
+   local dev: `http://localhost:3001`.
+3. Copy the project's `NEXT_PUBLIC_SUPABASE_URL` and **anon public** key (Project Settings →
+   API — never the `service_role` key) into `.env.local`.
+
+Without both env vars set, `middleware.ts` throws on every request — fails closed
+(no dashboard access), not open. See `app/lib/supabase-server.ts`, `app/lib/
+supabase-browser.ts`, `middleware.ts`, `app/login/page.tsx`.
+
+The "Reviewer ID" field on a claim's decision form now prefills from the signed-in Google/
+email identity instead of a free-text guess, tying the audit trail to a real account — still
+editable if someone is recording a decision on a colleague's behalf.
+
 ## Status
 
 Verified working end-to-end against a live local backend: queue list, claim detail (with

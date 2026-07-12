@@ -17,6 +17,7 @@ from app.observability import (
 from app.schemas import ClaimContext
 from app.storage import (
     create_processing_claim,
+    create_tenant,
     get_claim_usage_summary,
     get_tenant_usage_summary,
     init_db,
@@ -72,6 +73,11 @@ def create_tenant_and_key(client: TestClient, tenant_name: str, key_name: str) -
 
 def test_claim_usage_summary_returns_zeroes_for_claims_without_usage(monkeypatch, tmp_path):
     configure_storage_env(monkeypatch, tmp_path)
+    # claims.tenant_id is a real FK to tenants.tenant_id (enforced on Postgres always, and
+    # on SQLite too now — see repository.py::get_engine's PRAGMA foreign_keys=ON, added
+    # after this exact class of bug reached production on Supabase). Seed a real tenant
+    # row rather than relying on an arbitrary string that happens to satisfy the type.
+    create_tenant(name="Tenant Zero", slug="tenant-zero")
     create_processing_claim(
         "claim-zero-usage",
         ClaimContext(order_id="ORD-ZERO"),
@@ -97,6 +103,7 @@ def test_claim_usage_summary_returns_zeroes_for_claims_without_usage(monkeypatch
 
 def test_usage_reporting_persists_failed_calls_and_sanitizes_labels(monkeypatch, tmp_path):
     configure_storage_env(monkeypatch, tmp_path)
+    create_tenant(name="Tenant Failed", slug="tenant-failed")
     create_processing_claim(
         "claim-failed-usage",
         ClaimContext(order_id="ORD-FAIL"),
@@ -133,6 +140,7 @@ def test_usage_reporting_persists_failed_calls_and_sanitizes_labels(monkeypatch,
 
 def test_tenant_usage_summary_aggregates_multiple_claims(monkeypatch, tmp_path):
     configure_storage_env(monkeypatch, tmp_path)
+    create_tenant(name="Tenant Agg", slug="tenant-agg")
     create_processing_claim("claim-usage-a", ClaimContext(order_id="ORD-A"), tenant_id="tenant-agg")
     create_processing_claim("claim-usage-b", ClaimContext(order_id="ORD-B"), tenant_id="tenant-agg")
     create_processing_claim("claim-usage-c", ClaimContext(order_id="ORD-C"), tenant_id="tenant-agg")

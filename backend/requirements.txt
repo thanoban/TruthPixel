@@ -22,3 +22,6 @@ pytest>=8.2
 pytest-asyncio>=0.23
 aiosqlite>=0.21
 scikit-learn>=1.6
+# Verifies Supabase Auth JWTs (webapp free-tier-then-login gate) via JWKS — [crypto] extra
+# needed for RS256/ES256 (Supabase's asymmetric signing keys), not just HS256.
+pyjwt[crypto]>=2.9

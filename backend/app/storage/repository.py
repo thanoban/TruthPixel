@@ -6,7 +6,7 @@ from functools import lru_cache
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
@@ -46,13 +46,41 @@ def _engine_kwargs(database_url: str) -> dict:
     kwargs: dict = {"future": True}
     if database_url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+    elif database_url.startswith("postgresql"):
+        # psycopg3 auto-prepares a statement server-side after it's executed a few times
+        # (a real perf win on a direct connection) — but a transaction-mode pooler (e.g.
+        # Supabase's port 6543, what DATABASE_URL points at for app traffic) hands out a
+        # different backend connection per transaction, so a prepared statement from one
+        # transaction is invisible/invalid in the next: this silently breaks under real
+        # repeated traffic, not on the first few requests (autoprepare only kicks in after
+        # a threshold), which is exactly the kind of bug that passes local testing and
+        # fails in production. prepare_threshold=None disables autoprepare entirely — a
+        # small, safe cost on a direct connection, a correctness requirement on a pooler.
+        kwargs["connect_args"] = {"prepare_threshold": None}
     return kwargs
 
 
 @lru_cache
 def get_engine():
     settings = get_settings()
-    return create_engine(settings.database_url, **_engine_kwargs(settings.database_url))
+    engine = create_engine(settings.database_url, **_engine_kwargs(settings.database_url))
+    if settings.database_url.startswith("sqlite"):
+        # SQLite does NOT enforce foreign keys by default, unlike every real Postgres
+        # deployment of this app — so an FK violation that Postgres would reject outright
+        # (e.g. a claims.tenant_id pointing at a tenant that doesn't exist) silently
+        # succeeds in every local/CI test run and is only discovered live, in production.
+        # That's exactly what happened here: see docs/CORRECTIONS.md 2026-07-12 (2) — the
+        # implicit "local-dev" tenant string had no backing row in `tenants`, worked by
+        # accident on SQLite for the whole life of this project, and broke immediately the
+        # first time a claim was written to real Postgres. Turning this on makes SQLite
+        # behave like Postgres for this specific class of bug, so it's caught in every test
+        # run from now on instead of only when someone happens to test against a real DB.
+        @event.listens_for(engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+    return engine
 
 
 @lru_cache

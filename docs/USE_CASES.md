@@ -14,7 +14,7 @@
 |---|---|---|---|
 | **B2B API** (`POST /v1/claims`) | Marketplace/platform backends, integrated into their returns flow | Per-tenant API key when `API_AUTH_ENABLED=true`; local-dev bypass otherwise | Shipped API surface |
 | **Reviewer dashboard** (`dashboard/`) | A tenant's internal fraud-review staff | Reviewer auth still pending; today it reuses the stored-claim API | Scaffold built on `origin/main` |
-| **Public webapp** (`webapp/`) | Anyone — self-serve, one image at a time | Anonymous path exists; public-IP throttling is available when auth is enabled | Scaffolded now; not re-verified end-to-end here |
+| **Public webapp** (`webapp/`) | Anyone — self-serve, one image at a time | Anonymous path exists; public-IP throttling is available when auth is enabled | Polished single-image upload/report surface on top of the shipped claim API |
 
 All three sit on top of the same `run_claim()` LangGraph pipeline and the same fusion engine —
 one detection core, three doors in. This matters for the moat: every use case feeds the same

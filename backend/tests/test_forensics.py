@@ -30,18 +30,26 @@ def configured_settings(enabled: bool):
 
 
 @pytest.mark.asyncio
-async def test_forensics_analyzer_returns_stub_without_trufor(monkeypatch):
+async def test_forensics_analyzer_falls_back_to_classic_cpu_without_trufor(monkeypatch):
     monkeypatch.setattr(
         "app.analyzers.l2_forensics.get_settings", lambda: configured_settings(enabled=False)
     )
 
-    result = await ForensicsAnalyzer().analyze(b"image-bytes", ClaimContext())
+    result = await ForensicsAnalyzer().analyze(make_png(), ClaimContext())
 
     assert result.error is None
     assert result.layer == Layer.L2_FORENSICS
-    assert result.score == 0.5
-    assert result.evidence["note"] == "stub — L2 TruFor repo/model not configured"
+    assert 0.0 <= result.score <= 1.0
+    assert 0.0 <= result.confidence <= 1.0
+    assert result.model_version == "classic-forensics-0.1"
+    assert result.evidence["provider"] == "classic-cpu"
+    assert result.evidence["fallback_reason"] == "TruFor repo/model not configured"
     assert result.evidence["heatmap_url"] is None
+    assert result.evidence["heatmap_available"] is False
+    assert "ela_inconsistency" in result.evidence
+    assert "noise_inconsistency" in result.evidence
+    assert "ghost_inconsistency" in result.evidence
+    assert INTERNAL_HEATMAP_BYTES_KEY in result.evidence
 
 
 @pytest.mark.asyncio
@@ -89,7 +97,11 @@ def test_persist_signal_artifacts_saves_heatmap(monkeypatch, tmp_path):
     reset_artifact_store_state()
     init_db()
 
-    create_processing_claim("claim-forensics", ClaimContext(order_id="ORD-1"), tenant_id="local-dev")
+    # tenant_id=None (unscoped), not the literal string "local-dev" — matches what
+    # app/auth.py actually returns when API_AUTH_ENABLED=false. The old "local-dev" string
+    # pretended to be a real tenant with no backing tenants row; see
+    # docs/CORRECTIONS.md 2026-07-12 (2) for the production bug this caused.
+    create_processing_claim("claim-forensics", ClaimContext(order_id="ORD-1"), tenant_id=None)
     signal = SignalResult(
         layer=Layer.L2_FORENSICS,
         score=0.81,
@@ -102,9 +114,9 @@ def test_persist_signal_artifacts_saves_heatmap(monkeypatch, tmp_path):
         },
     )
 
-    persist_signal_artifacts("claim-forensics", [signal], tenant_id="local-dev")
+    persist_signal_artifacts("claim-forensics", [signal], tenant_id=None)
 
-    artifacts = list_claim_artifacts("claim-forensics", tenant_id="local-dev")
+    artifacts = list_claim_artifacts("claim-forensics", tenant_id=None)
     assert artifacts is not None
     assert len(artifacts) == 1
     assert artifacts[0].kind == "heatmap"

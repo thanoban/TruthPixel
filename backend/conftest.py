@@ -21,6 +21,18 @@ from app.config import get_settings  # noqa: E402
 # run together (individually each such test passed, just 35-40s instead of near-instant).
 # See docs/CORRECTIONS.md 2026-07-10 (4) for the full incident.
 #
+# DATABASE_URL / DIRECT_URL added 2026-07-12 for the same reason, found the same way: .env
+# now carries a real Supabase Postgres connection (production DB decision, see
+# docs/CORRECTIONS.md 2026-07-12 (2)). Without forcing these back to the local default here,
+# any test that doesn't explicitly monkeypatch its own isolated DATABASE_URL falls through
+# to the real Supabase DIRECT_URL for migrations — a silent no-op there since Supabase is
+# already at head — while actual queries hit whatever DATABASE_URL resolves to. Worse: tests
+# that DO override DATABASE_URL to their own tmp_path SQLite file still inherited the real
+# Supabase DIRECT_URL (this dict didn't know about that setting yet), so Alembic "succeeded"
+# against Supabase while the test's own SQLite file was never migrated at all —
+# `sqlite3.OperationalError: no such table: claims` on the very first query. 15 tests failed
+# this way in one run.
+#
 # A test that specifically wants to exercise a real/configured integration still can: call
 # monkeypatch.setenv(...) + get_settings.cache_clear() in the test itself (the existing
 # pattern already used throughout this suite) — that runs after this fixture and wins.
@@ -34,6 +46,8 @@ _STUB_SAFE_ENV = {
     "SIGHTENGINE_API_SECRET": "",
     "L5_EMBEDDING_ENABLED": "false",
     "FUSION_MODEL_PATH": "",
+    "DATABASE_URL": "sqlite:///./truthpixel.db",
+    "DIRECT_URL": "",
 }
 
 

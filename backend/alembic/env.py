@@ -28,9 +28,26 @@ config = context.config
 # etc.) still work fine without this — they just propagate to root and use whatever
 # handler is already there.
 
-# One source of truth for the DB URL: the app's own Settings (DATABASE_URL), not a
-# separately-maintained value in alembic.ini — see the comment there.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# One source of truth for the DB URL: the app's own Settings, not a separately-maintained
+# value in alembic.ini — see the comment there. Prefer DIRECT_URL when set (session-mode /
+# non-pooled connection — migrations run DDL in a single long-lived transaction, which a
+# transaction-mode pooler like Supabase's port 6543 doesn't reliably support), falling back
+# to DATABASE_URL for anything that doesn't distinguish the two (local SQLite, a plain
+# non-pooled Postgres). See Settings.direct_url's docstring in app/config.py.
+_settings = get_settings()
+_migration_url = _settings.direct_url or _settings.database_url
+
+# Alembic's Config wraps a stdlib configparser.ConfigParser with interpolation ON, which
+# treats a literal "%" as the start of a %(...)s reference — so any DB URL containing a
+# URL-encoded character (e.g. "%40" for "@" in a password, which is routine: Postgres
+# passwords with special characters get percent-encoded in connection strings) raises
+# `ValueError: invalid interpolation syntax` the moment set_main_option() is called. Found
+# live wiring up a real Supabase connection string with a percent-encoded password — never
+# hit before because no prior URL (sqlite paths, unencoded test values) contained a "%".
+# Fix: escape "%" as "%%" before storing; configparser's interpolation un-escapes "%%" back
+# to "%" on every subsequent get_main_option()/get_section() read below, so this round-trips
+# correctly rather than needing every read site to know about the escaping.
+config.set_main_option("sqlalchemy.url", _migration_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
@@ -39,6 +56,12 @@ def _engine_kwargs(database_url: str) -> dict:
     kwargs: dict = {"poolclass": pool.NullPool}
     if database_url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+    elif database_url.startswith("postgresql"):
+        # Same reasoning as app/storage/repository.py::_engine_kwargs — disable psycopg3
+        # autoprepare, since it's unsafe against any transaction-mode pooler and a harmless
+        # no-op otherwise. Migrations should use DIRECT_URL (session-mode) anyway, but this
+        # is defense-in-depth if that's unset and it falls back to a pooled DATABASE_URL.
+        kwargs["connect_args"] = {"prepare_threshold": None}
     return kwargs
 
 

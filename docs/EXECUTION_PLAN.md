@@ -49,15 +49,13 @@ Ordered by impact-per-effort; every step is CPU-only or uses already-hosted infe
 **Revised 2026-07-10** (see §2a for why) — sequencing and A2/A3's position changed from the
 original version of this doc; the items themselves didn't.
 
-- **A1. L2 classical forensics** *(module drafted, NOT wired in yet — `backend/app/forensics_classic.py`
-  exists but `l2_forensics.py` doesn't reference it; confirmed via grep 2026-07-10 (4). This
-  is the next concrete step, not "in progress.")*
+- **A1. L2 classical forensics** *(landed 2026-07-12)*
   ELA + block noise-inconsistency + JPEG-ghost, pure numpy/PIL, sub-second on CPU. Wired
   into `l2_forensics.py` below TruFor in precedence: TruFor (when configured) → classical
   (always available) → never a stub again. Produces a real localization heatmap through the
-  existing TruFor renderer + artifact persistence. Calibrate score constants against
-  synthetic splices; conservative confidence (classical methods are honest-but-noisy).
-  **Target:** a held-out discrimination number on CASIA v2 (see A1b), not just "scores
+  existing TruFor renderer + artifact persistence. Score constants are still only sanity-
+  calibrated against synthetic splices; confidence remains conservative by design.
+  **Next target:** a held-out discrimination number on CASIA v2 (see A1b), not just "scores
   meaningfully higher on our own splices."
 - **A1b. External eval — CASIA v2** *(new)* — evaluate A1's classical forensics against a
   held-out split of CASIA v2 (already a reuse candidate per COMPETITORS.md §3; standard

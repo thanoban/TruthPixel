@@ -266,6 +266,105 @@ button[type="submit"] {
   border: 1px solid rgba(153, 27, 27, 0.14);
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
+  background: linear-gradient(135deg, rgba(255, 252, 246, 0.96), rgba(238, 233, 220, 0.88));
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-card h1 {
+  font-size: 1.8rem;
+  max-width: none;
+}
+
+.primary-button {
+  border-radius: 999px;
+  border: 1px solid var(--text);
+  padding: 12px 20px;
+  background: var(--text);
+  color: #fff;
+  font-family: "Segoe UI", sans-serif;
+  font-weight: 600;
+}
+
+.primary-button:disabled,
+.login-form button[type="submit"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.login-form input {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(50, 42, 29, 0.2);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.login-note {
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.auth-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 0;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .back-link {
   color: var(--accent);
   font-family: "Segoe UI", sans-serif;

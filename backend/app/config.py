@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
     database_url: str = "sqlite:///./truthpixel.db"
+    # Optional: a separate connection string for schema migrations (Alembic), same
+    # convention Prisma uses. Only matters for poolers with a transaction-mode port
+    # (e.g. Supabase's 6543) that DATABASE_URL might point at for app traffic — DDL and
+    # long-lived migration transactions want the session-mode/direct connection instead.
+    # Falls back to DATABASE_URL when unset (e.g. local SQLite, or a non-pooled Postgres).
+    direct_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     storage_backend: str = "local"
     local_artifact_dir: str = "./artifact_storage"
@@ -59,6 +65,28 @@ class Settings(BaseSettings):
     public_submission_enabled: bool = False
     public_rate_limit_requests: int = 5
     public_rate_limit_window_seconds: int = 3600
+
+    # Signed-in public webapp users (Supabase Auth — Google or email/password) get a higher
+    # rate limit than anonymous IP-based ones, scoped to their Supabase user id instead of
+    # IP. See app/supabase_auth.py; falls back to the anonymous public_rate_limit_* above
+    # when no/invalid bearer token is presented — additive, not a breaking change.
+    public_user_rate_limit_requests: int = 25
+    public_user_rate_limit_window_seconds: int = 3600
+
+    # Same Supabase project as DATABASE_URL/DIRECT_URL — used here only to verify Auth JWTs
+    # (webapp's free-tier-then-login gate), not for DB access. supabase_jwks_url is derived
+    # from supabase_url when unset; only set it directly to override (e.g. a self-hosted
+    # Supabase instance with a non-standard JWKS path).
+    supabase_url: str = ""
+    supabase_jwks_url: str = ""
+
+    @property
+    def resolved_supabase_jwks_url(self) -> str:
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        if self.supabase_url:
+            return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        return ""
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers on localhost
