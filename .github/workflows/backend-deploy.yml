@@ -76,6 +76,27 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/truthpixel-backend
 
 jobs:
+  # Job-level `if:` conditions cannot reference the `secrets` context at all (only `github`,
+  # `inputs`, `needs`, `vars` are available there) -- `deploy-gcp`'s old
+  # `if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}` failed GitHub's own workflow
+  # schema validation, which rejects the ENTIRE file before scheduling any job at all (0 jobs,
+  # instant "failure", no logs -- this is what every run of this workflow hit, going back to
+  # before this fix). `secrets` IS available inside a step, so this job runs one step to read
+  # the secret and expose a `needs.*.outputs.*` value instead, which job-level `if:` CAN read.
+  # See docs/CORRECTIONS.md 2026-07-12 (5) for how this was found (actionlint).
+  check-gcp-config:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -104,9 +125,9 @@ jobs:
           echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
   deploy-gcp:
-    needs: build-and-push
+    needs: [build-and-push, check-gcp-config]
     runs-on: ubuntu-latest
-    if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+    if: needs.check-gcp-config.outputs.configured == 'true'
     permissions:
       contents: read
       id-token: write # required for Workload Identity Federation
