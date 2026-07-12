@@ -144,8 +144,25 @@ class Settings(BaseSettings):
         return bool(self.google_cloud_project)
 
     @property
+    def l2_trufor_missing_settings(self) -> list[str]:
+        missing: list[str] = []
+        if not self.l2_trufor_repo_dir.strip():
+            missing.append("L2_TRUFOR_REPO_DIR")
+        if not self.l2_trufor_model_file.strip():
+            missing.append("L2_TRUFOR_MODEL_FILE")
+        return missing
+
+    @property
     def l2_trufor_configured(self) -> bool:
-        return bool(self.l2_trufor_repo_dir and self.l2_trufor_model_file)
+        return not self.l2_trufor_missing_settings
+
+    @property
+    def l2_trufor_runtime_status(self) -> str:
+        if self.l2_trufor_configured:
+            return "configured"
+        if len(self.l2_trufor_missing_settings) == 2:
+            return "stub"
+        return "partial"
 
 
 @lru_cache

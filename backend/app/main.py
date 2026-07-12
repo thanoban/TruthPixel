@@ -137,6 +137,7 @@ async def health() -> dict:
     return {
         "status": "ok",
         "vertex_agents": "configured" if settings.vertex_configured else "stub",
+        "l2_trufor": settings.l2_trufor_runtime_status,
         "storage": "configured" if settings.database_url else "disabled",
         "queue": "eager" if settings.celery_task_always_eager else "worker",
     }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -118,6 +119,26 @@ def _explain_subprocess_failure(stderr: str, python_executable: str, layout: Tru
     return stderr.strip()
 
 
+def _resolve_python_executable(python_executable: str) -> str:
+    candidate = (python_executable or "").strip() or sys.executable
+    looks_like_path = any(sep in candidate for sep in ("/", "\\"))
+    if looks_like_path:
+        resolved = Path(candidate).expanduser().resolve()
+        if not resolved.exists():
+            raise RuntimeError(f"TruFor Python executable does not exist: {resolved}")
+        if resolved.is_dir():
+            raise RuntimeError(f"TruFor Python executable points to a directory: {resolved}")
+        return str(resolved)
+
+    resolved_name = shutil.which(candidate)
+    if resolved_name:
+        return resolved_name
+    raise RuntimeError(
+        f"TruFor Python executable '{candidate}' was not found on PATH. "
+        "Set L2_TRUFOR_PYTHON_EXECUTABLE to a compatible interpreter."
+    )
+
+
 def _coerce_probability_map(array: np.ndarray) -> np.ndarray:
     matrix = np.asarray(array, dtype=np.float32)
     matrix = np.squeeze(matrix)
@@ -160,7 +181,7 @@ def _render_heatmap_png(
 
 def run_trufor_inference(image: bytes) -> TruForResult:
     settings = get_settings()
-    python_executable = settings.l2_trufor_python_executable or sys.executable
+    python_executable = _resolve_python_executable(settings.l2_trufor_python_executable)
     layout = _resolve_trufor_layout(
         settings.l2_trufor_repo_dir,
         settings.l2_trufor_model_file,
@@ -194,16 +215,26 @@ def run_trufor_inference(image: bytes) -> TruForResult:
             "TEST.MODEL_FILE",
             model_file,
         ]
-        process = subprocess.run(
-            command,
-            cwd=layout.workdir,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=settings.l2_trufor_timeout_seconds,
-            check=False,
-        )
+        try:
+            process = subprocess.run(
+                command,
+                cwd=layout.workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=settings.l2_trufor_timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"TruFor inference timed out after {settings.l2_trufor_timeout_seconds:g}s. "
+                "Check the TruFor environment, device setting, and model startup cost."
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"Unable to launch TruFor subprocess via {python_executable}: {exc}"
+            ) from exc
         if process.returncode != 0:
             details = "\n".join(
                 part.strip() for part in (process.stdout, process.stderr) if part and part.strip()
@@ -213,11 +244,17 @@ def run_trufor_inference(image: bytes) -> TruForResult:
 
         outputs = sorted(output_dir.rglob("*.npz"))
         if not outputs:
-            raise RuntimeError("TruFor did not produce any .npz outputs")
+            raise RuntimeError(
+                f"TruFor did not produce any .npz outputs under {output_dir}. "
+                "Check the upstream runtime logs and output permissions."
+            )
 
         with np.load(outputs[0], allow_pickle=False) as payload:
-            if "map" not in payload or "score" not in payload:
-                raise RuntimeError("TruFor output is missing required map/score keys")
+            missing_keys = sorted({"map", "score"} - set(payload.files))
+            if missing_keys:
+                raise RuntimeError(
+                    f"TruFor output is missing required keys: {', '.join(missing_keys)}"
+                )
             anomaly_map = _coerce_probability_map(payload["map"])
             confidence_map = (
                 _coerce_probability_map(payload["conf"]) if "conf" in payload else None

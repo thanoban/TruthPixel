@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { API_URL, fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
+import { fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
 import { createSupabaseBrowserClient } from "../../lib/supabase-browser";
 import type { AuditEvent, ClaimArtifact, ReviewDecisionValue, StoredClaim } from "../../types";
 import {
   LAYER_LABELS,
+  artifactProxyPath,
   formatPercent,
   formatTimestamp,
   humanizeEvent,
@@ -94,6 +95,14 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
 
   const originalArtifact = useMemo(() => getArtifact(claim, "original_upload"), [claim]);
   const heatmapArtifact = useMemo(() => getArtifact(claim, "heatmap"), [claim]);
+  const l2Signal = useMemo(
+    () => claim?.signals.find((signal) => signal.layer === "l2_forensics") ?? null,
+    [claim]
+  );
+  const heatmapDiagnostic = useMemo(
+    () => describeHeatmapState(l2Signal, heatmapArtifact),
+    [heatmapArtifact, l2Signal]
+  );
 
   async function handleDecisionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -181,13 +190,13 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               {originalArtifact ? (
                 <div className="overlay-stage">
                   <img
-                    src={`${API_URL}${originalArtifact.download_path}`}
+                    src={artifactProxyPath(originalArtifact.claim_id, originalArtifact.id)}
                     alt="Original claim upload"
                     className="stage-image"
                   />
                   {heatmapArtifact && (
                     <img
-                      src={`${API_URL}${heatmapArtifact.download_path}`}
+                      src={artifactProxyPath(heatmapArtifact.claim_id, heatmapArtifact.id)}
                       alt="Heatmap overlay"
                       className="stage-image overlay-image"
                       style={{ opacity: overlayOpacity / 100 }}
@@ -197,11 +206,12 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               ) : (
                 <p className="muted-copy">No original artifact is stored for this claim yet.</p>
               )}
+              {heatmapDiagnostic && <p className="muted-copy">{heatmapDiagnostic}</p>}
               <div className="artifact-strip">
                 {claim.artifacts.map((artifact) => (
                   <a
                     key={artifact.id}
-                    href={`${API_URL}${artifact.download_path}`}
+                    href={artifactProxyPath(artifact.claim_id, artifact.id)}
                     className="artifact-chip"
                     target="_blank"
                     rel="noreferrer"
@@ -353,4 +363,24 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
       )}
     </main>
   );
+}
+
+function describeHeatmapState(
+  l2Signal: StoredClaim["signals"][number] | null,
+  heatmapArtifact: ClaimArtifact | null
+): string | null {
+  if (!l2Signal || heatmapArtifact) {
+    return null;
+  }
+  if (l2Signal.error) {
+    return `L2 forensics unavailable: ${l2Signal.error}`;
+  }
+  const storageError =
+    typeof l2Signal.evidence.heatmap_storage_error === "string"
+      ? l2Signal.evidence.heatmap_storage_error
+      : null;
+  if (storageError) {
+    return `Heatmap artifact unavailable: ${storageError}`;
+  }
+  return typeof l2Signal.evidence.note === "string" ? l2Signal.evidence.note : null;
 }

@@ -44,8 +44,11 @@ def persist_signal_artifacts(
                 raise RuntimeError("claim record was not available for heatmap persistence")
         except Exception as exc:  # noqa: BLE001
             evidence["heatmap_available"] = False
+            evidence["heatmap_download_path"] = None
             evidence["heatmap_url"] = None
             evidence["heatmap_artifact_id"] = None
+            evidence["heatmap_filename"] = None
+            evidence["heatmap_media_type"] = None
             evidence["heatmap_storage_error"] = f"{type(exc).__name__}: {exc}"
             continue
 
@@ -55,3 +58,4 @@ def persist_signal_artifacts(
         evidence["heatmap_url"] = artifact.download_path
         evidence["heatmap_filename"] = artifact.filename
         evidence["heatmap_media_type"] = artifact.media_type
+        evidence.pop("heatmap_storage_error", None)

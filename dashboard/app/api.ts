@@ -6,11 +6,7 @@ import type {
   ReviewDecisionValue,
 } from "./types";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-// Reviewer auth: set NEXT_PUBLIC_API_KEY when the backend has API_AUTH_ENABLED=true.
-// Unset by default, matching the backend's local-dev bypass — see dashboard/README.md.
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+const DASHBOARD_API_URL = "/api";
 
 async function parseError(response: Response): Promise<string> {
   try {
@@ -23,13 +19,15 @@ async function parseError(response: Response): Promise<string> {
 }
 
 export async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const headers = new Headers(init?.headers);
+  const hasBody = init?.body !== undefined && init?.body !== null;
+  if (hasBody && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(`${DASHBOARD_API_URL}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
-      ...(init?.headers || {}),
-    },
+    headers,
     cache: "no-store",
   });
   if (!response.ok) {

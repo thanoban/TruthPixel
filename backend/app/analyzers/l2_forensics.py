@@ -10,6 +10,13 @@ from ..trufor import SUSPICIOUS_PIXEL_THRESHOLD, _render_heatmap_png, run_trufor
 from .base import Analyzer
 
 
+def _stub_note(settings) -> str:
+    missing = getattr(settings, "l2_trufor_missing_settings", [])
+    if not missing or len(missing) == 2:
+        return "stub — L2 TruFor repo/model not configured"
+    return f"stub — L2 TruFor missing {', '.join(missing)}"
+
+
 class ForensicsAnalyzer(Analyzer):
     """L2 — manipulation / edit forensics (inpainting, splicing, copy-move).
 
@@ -39,8 +46,10 @@ class ForensicsAnalyzer(Analyzer):
                 confidence=result.confidence,
                 evidence={
                     "provider": "classic-cpu",
-                    "fallback_reason": "TruFor repo/model not configured",
+                    "fallback_reason": _stub_note(settings),
+                    "runtime_status": getattr(settings, "l2_trufor_runtime_status", "stub"),
                     "heatmap_available": False,
+                    "heatmap_download_path": None,
                     "heatmap_url": None,
                     "heatmap_mean": round(float(resized_map.mean()), 4),
                     "heatmap_max": round(float(resized_map.max()), 4),
@@ -62,7 +71,9 @@ class ForensicsAnalyzer(Analyzer):
             confidence=result.confidence,
             evidence={
                 "provider": "trufor",
+                "runtime_status": getattr(settings, "l2_trufor_runtime_status", "configured"),
                 "heatmap_available": False,
+                "heatmap_download_path": None,
                 "heatmap_url": None,
                 "heatmap_mean": result.heatmap_mean,
                 "heatmap_max": result.heatmap_max,

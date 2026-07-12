@@ -5,28 +5,31 @@ overlay (original upload + TruFor anomaly map with an opacity slider), audit tra
 decision form (`POST /v1/claims/{id}/decision`). Runs on `:3001` by default.
 
 This is a thin client. All detection/fusion logic lives in `backend/`; this app only calls
-the `/v1/claims*` API (`app/api.ts`) and renders the response. Do not add analyzer or fusion
-logic here.
+the `/v1/claims*` API (`app/api.ts` → the server-side proxy in `app/api/`) and renders the
+response. Do not add analyzer or fusion logic here.
 
 ## Run locally
 
 ```bash
 cd dashboard
 npm install
-cp .env.local.example .env.local   # set NEXT_PUBLIC_API_URL / NEXT_PUBLIC_API_KEY
 npm run dev   # http://localhost:3001
 ```
 
-Set `NEXT_PUBLIC_API_URL` if the backend isn't at the default `http://localhost:8000`
-(see `app/api.ts`). CORS for `:3001` is already in `backend/app/config.py`'s
-`cors_allow_origins` default, for both `localhost` and `127.0.0.1`.
-
-**Auth note:** with the backend's default `API_AUTH_ENABLED=false`, every request runs as an
-implicit local-dev tenant and this just works — `NEXT_PUBLIC_API_KEY` can stay unset. If you
-turn `API_AUTH_ENABLED=true`, set `NEXT_PUBLIC_API_KEY` to a tenant key issued via
-`POST /v1/admin/tenants/{tenant_id}/api-keys` (see `backend/app/auth.py`) — `app/api.ts`
-sends it as `X-API-Key` on every request when present. Still missing: a tenant switcher (one
-key is baked in at build/env time, not selectable per-session in the UI).
+**Backend proxy:** the browser never calls the backend directly or holds an API key — every
+`app/api.ts` call hits this app's own `/api/...` Next.js route handlers (`app/api/_lib/
+backend.ts`), which attach the real tenant key server-side and forward the request. Set
+`TRUTHPIXEL_API_URL` (falls back to `NEXT_PUBLIC_API_URL`, then `http://localhost:8000`) and
+`TRUTHPIXEL_DASHBOARD_API_KEY` to a tenant key issued via
+`POST /v1/admin/tenants/{tenant_id}/api-keys` (see `backend/app/auth.py`) as **server-only**
+env vars (no `NEXT_PUBLIC_` prefix — they must never reach the browser bundle). Without
+`TRUTHPIXEL_DASHBOARD_API_KEY` set, every proxied call 503s
+(`app/api/_lib/backend.ts::dashboardAuthError`) — this only matters once the backend has
+`API_AUTH_ENABLED=true`; with the backend's default `false`, every request runs as an
+implicit local-dev tenant regardless of what the dashboard sends. CORS for `:3001` is
+already in `backend/app/config.py`'s `cors_allow_origins` default, for both `localhost` and
+`127.0.0.1`. Still missing: a tenant switcher (one key is baked in at deploy/env time, not
+selectable per-session in the UI).
 
 ## Reviewer login (Google + email/password via Supabase Auth)
 
