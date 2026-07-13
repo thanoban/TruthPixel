@@ -14,12 +14,12 @@ name: Backend Deploy
 # enabled on the project first, and the project needs an active billing account linked --
 # neither Artifact Registry nor Cloud Run will enable without one, even for free-tier usage):
 #
-# Done 2026-07-12 for projectbucket-501814 (this repo's shared GCP project -- responsive-
+# Done 2026-07-12 for <gcp-project-id> (this repo's shared GCP project -- responsive-
 # sun-491204-e0 was the original target but its billing account had hit GCP's 5-project
-# billing-link quota, so billing was moved to projectbucket-501814 instead; see
+# billing-link quota, so billing was moved to <gcp-project-id> instead; see
 # docs/CORRECTIONS.md). Re-run this block only if the infra needs to be recreated elsewhere.
 #
-#   PROJECT_ID=<your-gcp-project-id>          # e.g. projectbucket-501814
+#   PROJECT_ID=<your-gcp-project-id>          # e.g. <gcp-project-id>
 #   PROJECT_NUMBER=<your-gcp-project-number>  # gcloud projects describe $PROJECT_ID --format='value(projectNumber)'
 #   REGION=us-central1                        # match GOOGLE_CLOUD_LOCATION used for Vertex AI
 #   REPO=truthpixel                           # Artifact Registry repo name

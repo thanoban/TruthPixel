@@ -77,18 +77,18 @@ workflow had never actually been run against real GCP config — every prior run
 being unset), which is expected, working-as-designed behavior, not a bug.
 
 **Real blocker found: GCP billing accounts have a default project-link quota.** The billing
-account backing `responsive-sun-491204-e0` (the project TruthPixel's Vertex AI config
+account backing `<old-gcp-project-id>` (the project TruthPixel's Vertex AI config
 already pointed at) had already hit that quota from unrelated projects — a brand-new project
-(`projectbucket-501814`, created because the user's GCP *project-creation* quota was
+(`<gcp-project-id>`, created because the user's GCP *project-creation* quota was
 separately exhausted) couldn't be billing-linked at all (`gcloud billing projects link` →
 `FAILED_PRECONDITION: Cloud billing quota exceeded`). Neither Artifact Registry nor Cloud
 Run will enable without an active billing link, even for free-tier usage — this isn't
 optional for this deploy path.
 
-**Resolution:** unlinked billing from `responsive-sun-491204-e0` (user's explicit choice —
-that project is being retired in favor of `projectbucket-501814` as the shared home for all
+**Resolution:** unlinked billing from `<old-gcp-project-id>` (user's explicit choice —
+that project is being retired in favor of `<gcp-project-id>` as the shared home for all
 university projects going forward, not TruthPixel-specific), linked the same billing account
-to `projectbucket-501814` instead, then built the deploy infrastructure there: an Artifact
+to `<gcp-project-id>` instead, then built the deploy infrastructure there: an Artifact
 Registry repo, a dedicated deploy service account (`run.admin` /
 `artifactregistry.writer` / `iam.serviceAccountUser` — least privilege for this workflow, not
 project-wide access), and a Workload Identity Pool + OIDC provider whose attribute-condition
@@ -99,7 +99,7 @@ full identity-provider resource path plus service-account email together are mor
 infrastructure fingerprinting than a public doc needs to expose).
 
 `GOOGLE_CLOUD_PROJECT` in `backend/.env` (gitignored, not committed) migrated from
-`responsive-sun-491204-e0` to `projectbucket-501814` — unlinking billing broke Vertex AI on
+`<old-gcp-project-id>` to `<gcp-project-id>` — unlinking billing broke Vertex AI on
 the old project too, since that also requires active billing. **Verified live**: a real
 claim submission got a real Gemini response back through `semantic_inspector` on the new
 project, not a stub/fallback. Not verified: whether the old project's "GenAI App Builder"
