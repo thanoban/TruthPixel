@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
     database_url: str = "sqlite:///./truthpixel.db"
+    # Optional: a separate connection string for schema migrations (Alembic), same
+    # convention Prisma uses. Only matters for poolers with a transaction-mode port
+    # (e.g. Supabase's 6543) that DATABASE_URL might point at for app traffic — DDL and
+    # long-lived migration transactions want the session-mode/direct connection instead.
+    # Falls back to DATABASE_URL when unset (e.g. local SQLite, or a non-pooled Postgres).
+    direct_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     storage_backend: str = "local"
     local_artifact_dir: str = "./artifact_storage"
@@ -24,6 +30,18 @@ class Settings(BaseSettings):
     listing_fetch_timeout_seconds: float = 8.0
     listing_max_images: int = 5
     l5_recent_claim_window: int = 40
+    # L5 v1: blend a frozen-CLIP embedding cosine similarity into the v0 hash+histogram
+    # score. No training — pure inference, same open_clip loader as L1's checkpoint path.
+    # ViT-B-32 (not L1's default ViT-L-14) — cheaper, similarity doesn't need the bigger model.
+    # Defaults OFF, matching L1/L2/L3's opt-in-only pattern: found live (a real ~7-minute
+    # test-suite run and a hung demo request) that first use triggers a real network
+    # download of the model weights, which can stall indefinitely on a slow/offline
+    # connection — see docs/CORRECTIONS.md. Opt in once weights are pre-warmed locally.
+    l5_embedding_enabled: bool = False
+    l5_embedding_model: str = "ViT-B-32"
+    l5_embedding_pretrained: str = "openai"
+    l5_embedding_device: str = "cpu"
+    l5_embedding_weight: float = 0.5
     l1_model_path: str = ""
     l1_model_device: str = "auto"
     # L1 HF Inference API ensemble (zero-training path). When no local checkpoint is set
@@ -33,6 +51,7 @@ class Settings(BaseSettings):
     hf_api_token: str = ""
     l1_hf_models: str = "Ateeqq/ai-vs-human-image-detector,Nahrawy/AIorNot"
     hf_inference_timeout_seconds: float = 30.0
+    hf_request_cost_usd: float = 0.0
     l2_trufor_repo_dir: str = ""
     l2_trufor_model_file: str = ""
     l2_trufor_python_executable: str = ""
@@ -46,6 +65,28 @@ class Settings(BaseSettings):
     public_submission_enabled: bool = False
     public_rate_limit_requests: int = 5
     public_rate_limit_window_seconds: int = 3600
+
+    # Signed-in public webapp users (Supabase Auth — Google or email/password) get a higher
+    # rate limit than anonymous IP-based ones, scoped to their Supabase user id instead of
+    # IP. See app/supabase_auth.py; falls back to the anonymous public_rate_limit_* above
+    # when no/invalid bearer token is presented — additive, not a breaking change.
+    public_user_rate_limit_requests: int = 25
+    public_user_rate_limit_window_seconds: int = 3600
+
+    # Same Supabase project as DATABASE_URL/DIRECT_URL — used here only to verify Auth JWTs
+    # (webapp's free-tier-then-login gate), not for DB access. supabase_jwks_url is derived
+    # from supabase_url when unset; only set it directly to override (e.g. a self-hosted
+    # Supabase instance with a non-standard JWKS path).
+    supabase_url: str = ""
+    supabase_jwks_url: str = ""
+
+    @property
+    def resolved_supabase_jwks_url(self) -> str:
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        if self.supabase_url:
+            return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        return ""
 
     # CORS — public webapp + reviewer dashboard are separate origins from the API.
     # Comma-separated in env; defaults cover local Next.js dev servers on localhost
@@ -75,6 +116,8 @@ class Settings(BaseSettings):
     google_cloud_project: str = ""
     google_cloud_location: str = "us-central1"
     vertex_model: str = "gemini-2.0-flash"
+    vertex_input_cost_per_1m_tokens: float = 0.0
+    vertex_output_cost_per_1m_tokens: float = 0.0
     agent_pass_enabled: bool = True
     # Agents run only when preliminary risk is inside (low, high) — i.e. uncertain —
     # or when recapture is flagged. High-confidence clean/fraud skips the LLM pass.
@@ -89,6 +132,7 @@ class Settings(BaseSettings):
     sightengine_api_user: str = ""
     sightengine_api_secret: str = ""
     sightengine_timeout_seconds: float = 15.0
+    sightengine_request_cost_usd: float = 0.0
     c2patool_path: str = "c2patool"
     c2patool_timeout_seconds: float = 8.0
     c2patool_trust_anchors: str = ""

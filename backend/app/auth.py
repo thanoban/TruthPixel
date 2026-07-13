@@ -14,6 +14,7 @@ from .storage import (
     record_rate_limit_hit,
     touch_api_key_last_used,
 )
+from .supabase_auth import SupabaseAuthError, SupabaseAuthNotConfigured, verify_supabase_token
 
 
 API_KEY_HEADER = "X-API-Key"
@@ -129,7 +130,15 @@ def require_tenant_api_key(
 ) -> AuthContext:
     settings = get_settings()
     if not settings.api_auth_enabled:
-        return AuthContext(tenant_id="local-dev", tenant_name="Local Dev")
+        # tenant_id=None, not the string "local-dev": claims.tenant_id has a real FK to
+        # tenants.tenant_id (nullable, precisely so an unscoped/no-auth claim can point at
+        # nothing rather than a fake tenant row). A literal "local-dev" string worked by
+        # accident on SQLite (FK constraints aren't enforced there by default) and broke
+        # immediately on Postgres with a real ForeignKeyViolation the moment auth-disabled
+        # local dev tried to write a claim — found live wiring up Supabase. None is exactly
+        # what the repository layer's `if tenant_id is not None: ...` filters already treat
+        # as "unscoped," so this is the fix the schema was already designed for.
+        return AuthContext(tenant_id=None, tenant_name="Local Dev")
 
     auth = _authenticate_api_key(x_api_key)
     record = get_api_key_auth(hash_api_key(x_api_key or ""))
@@ -151,16 +160,65 @@ def allow_public_submission(
     request: Request,
     response: Response,
     x_api_key: str | None = Header(default=None, alias=API_KEY_HEADER),
+    authorization: str | None = Header(default=None),
 ) -> AuthContext:
     settings = get_settings()
     if not settings.api_auth_enabled:
-        return AuthContext(tenant_id="local-dev", tenant_name="Local Dev")
+        # tenant_id=None, not the string "local-dev": claims.tenant_id has a real FK to
+        # tenants.tenant_id (nullable, precisely so an unscoped/no-auth claim can point at
+        # nothing rather than a fake tenant row). A literal "local-dev" string worked by
+        # accident on SQLite (FK constraints aren't enforced there by default) and broke
+        # immediately on Postgres with a real ForeignKeyViolation the moment auth-disabled
+        # local dev tried to write a claim — found live wiring up Supabase. None is exactly
+        # what the repository layer's `if tenant_id is not None: ...` filters already treat
+        # as "unscoped," so this is the fix the schema was already designed for.
+        return AuthContext(tenant_id=None, tenant_name="Local Dev")
 
     if x_api_key:
         return require_tenant_api_key(request=request, response=response, x_api_key=x_api_key)
 
     if not settings.public_submission_enabled:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key required")
+
+    # Signed-in webapp users (Google or email/password via Supabase Auth) get a higher rate
+    # limit than anonymous requests, scoped to their Supabase user id instead of IP — an
+    # account survives a wifi change or a shared office IP, an IP-based bucket doesn't
+    # survive a user switching networks. Falls through to the anonymous IP path below when
+    # no bearer token is presented at all, so this is additive to the existing public flow,
+    # not a replacement for it.
+    bearer_token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        bearer_token = authorization[len("bearer "):].strip()
+
+    if bearer_token:
+        try:
+            claims = verify_supabase_token(bearer_token)
+        except SupabaseAuthNotConfigured:
+            # This backend deployment never set SUPABASE_URL — the webapp has no way to know
+            # that before sending the header. Treat it as if no token were sent at all
+            # (anonymous IP path below), not a 401: a signed-in user shouldn't get a worse
+            # experience than an anonymous one just because the backend's auth verification
+            # isn't wired up yet.
+            bearer_token = None
+        except SupabaseAuthError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail=f"invalid session: {exc}"
+            ) from exc
+
+    if bearer_token:
+        _enforce_rate_limit(
+            response=response,
+            scope_type="public_user",
+            scope_key=str(claims.get("sub", "")),
+            limit=settings.public_user_rate_limit_requests,
+            window_seconds=settings.public_user_rate_limit_window_seconds,
+            route=request.url.path,
+        )
+        return AuthContext(
+            tenant_id=None,
+            tenant_name=str(claims.get("email") or "Public User"),
+            is_public=True,
+        )
 
     client_ip = _client_ip(request)
     _enforce_rate_limit(

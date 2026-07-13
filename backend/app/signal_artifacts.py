@@ -5,7 +5,7 @@ from .schemas import ArtifactKind, Layer, SignalResult
 from .storage import add_artifact
 
 INTERNAL_HEATMAP_BYTES_KEY = "_heatmap_png_bytes"
-HEATMAP_FILENAME = "trufor-heatmap.png"
+HEATMAP_FILENAME = "forensics-heatmap.png"
 HEATMAP_MEDIA_TYPE = "image/png"
 
 

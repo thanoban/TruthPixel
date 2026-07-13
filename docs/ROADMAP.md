@@ -2,12 +2,36 @@
 
 > Concrete, checkable milestones. Local-first development; cloud only when it earns its cost.
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
-> [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [AGENTS.md](AGENTS.md) ·
+> [COMPETITORS.md](COMPETITORS.md) · [ML_PLAN.md](ML_PLAN.md) · [BENCHMARK.md](BENCHMARK.md) · [AGENTS.md](AGENTS.md) ·
 > [CORRECTIONS.md](CORRECTIONS.md) (full-system audit log — bugs found/fixed each pass)
+>
+> **Current development block:** [EXECUTION_PLAN.md](EXECUTION_PLAN.md) (2026-07-10) — the
+> sequenced plan for forensic-grade accuracy (Track A), multi-agent automation (Track B),
+> and pilot readiness (Track C). Phase 1/2 items below are being executed in that order.
 
-## Reality snapshot — 2026-07-08
+## Reality snapshot — 2026-07-12, superseding the one below
 
-Before reading the phase checklist, anchor on the repo as it really exists today:
+Re-verified by actually running the repo, not reading docs.
+
+| Area | State |
+|---|---|
+| Test suite | **Green**: full `pytest -c pytest.ini` passes again (69 tests in the current checkout). Test isolation now forces heavy/external integrations off by default for tests so `backend/.env`'s real Vertex/L1 settings do not leak into "stub mode" expectations. See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-12. |
+| L1 AI-gen | **Real, trained, live** — 0.9688 held-out AUROC, checkpoint in `backend/models/`, verified against a running server |
+| L2 forensics | **Real on every run now** — precedence is `TruFor -> classical CPU fallback`. When TruFor is unconfigured, `backend/app/forensics_classic.py` provides ELA + noise-inconsistency + JPEG-ghost scoring plus a persisted heatmap artifact. TruFor path still exists for higher-accuracy deployments with the external checkout/weights. |
+| L3/L4 | Real (Sightengine w/ keys; EXIF+c2patool always on) |
+| L5 | Real — v0 hash/histogram + v1 CLIP-embedding blend + intra-system reuse detection |
+| Fusion | Hand-weighted only — learned-fusion runtime code exists (`ml/fusion/`) but **no model trained**, `FUSION_MODEL_PATH` unset, no labeled data (`ml/datagen/` doesn't exist) |
+| Agents | **Real, live, verified** — Vertex/Gemini semantic inspector + damage plausibility + report writer |
+| Platform | Auth/tenancy/rate-limits, async queue, persistence, **Alembic migrations**, structured tracing/observability, Dockerfile + CI workflow (untested against a real push), demo script — all real |
+| Reviewer/webapp surfaces | Both built; dashboard auth only verified against the default *disabled* path; public webapp now has a polished single-image upload/report UI on top of the shipped claim API |
+| Automation (Track B) | **Nothing built** — no batch API, no triage-router agent, no auto-dispositions, no cross-claim pattern agent |
+| Startup readiness (Track C) | Dockerfile+CI exist but **not deployed**; per-claim/per-tenant cost accounting now persists and reports, but no retention/PII/SLA doc or pilot kit yet |
+
+See [EXECUTION_PLAN.md](EXECUTION_PLAN.md) for the sequenced plan closing the external-eval and
+learned-fusion gaps, and [CORRECTIONS.md](CORRECTIONS.md) 2026-07-12 for the latest full-system pass.
+
+<details>
+<summary>Reality snapshot — 2026-07-08 (superseded, kept for history)</summary>
 
 | Area | Already built on `origin/main` | Branch-only today | Still missing before the own-model L1 upgrade is complete |
 |---|---|---|---|
@@ -21,6 +45,8 @@ the repo already contains the L1/L2 integration paths, yet they still depend on 
 configuration. L1 can already run via the HF ensemble with `HF_API_TOKEN`, but the
 domain-tuned checkpoint path still needs a real training run; L2 still needs an external
 TruFor checkout/weights.
+
+</details>
 
 ## Phase 0 — Working end-to-end demo (target: ~2–4 weeks of evenings)
 
@@ -39,6 +65,12 @@ Scaffold (done / in progress):
 - [x] Smoke tests (graph end-to-end, error isolation, combo rule)
 
 Remaining:
+- [x] Fixed: test suite isolation now forces heavy/external integrations off by default for
+      tests, so `backend/.env` no longer breaks the suite. Re-verified green in the current
+      checkout; see CORRECTIONS.md 2026-07-12.
+- [x] L2 classical fallback wired: `backend/app/forensics_classic.py` now backs
+      `l2_forensics.py` whenever TruFor is unconfigured, producing a real score + heatmap
+      instead of a neutral stub. See EXECUTION_PLAN.md A1 / CORRECTIONS.md 2026-07-12.
 - [x] Install deps, run test suite, fix anything red
 - [x] Git init, first commit, push to github.com/thanoban/TruthPixel (user-authored commits, no AI co-author)
 - [x] L1 HF-ensemble path (zero-training, shipped): `backend/app/hf_inference.py` +
@@ -48,19 +80,34 @@ Remaining:
       **Operational note:** needs an HF token set; without it L1 falls back to stub.
 - [x] L1 wiring (local checkpoint): `l1_aigen.py` loads a trained CLIP-head via
       `L1_MODEL_PATH`/`L1_MODEL_DEVICE`, taking precedence over the HF ensemble when set
-- [ ] L1 own-model upgrade: train the screenshot-augmented CLIP-head on a GenImage subset
-      (`ml/layer1_aigen/`) — see [docs/COLAB_TRAINING.md](COLAB_TRAINING.md) (no local GPU:
-      Colab + Drive). This is the domain-tuned *upgrade* to the HF ensemble, not a blocker for
-      a working L1. No checkpoint trained/deployed yet.
+- [x] L1 own-model upgrade: **trained, deployed, and verified live (2026-07-10).** First real
+      checkpoint trained on Kaggle (`run_20260710_0737`, see
+      [docs/KAGGLE_TRAINING.md](KAGGLE_TRAINING.md)) — CIFAKE (3k/class) + DiffusionDB (3k) +
+      COCO real fallback (3k) + 25-prompt self-generated SDXL held-out bucket, 5 epochs.
+      **Held-out-generator headline metric (sdxl/midjourney/flux, unseen in training): 0.9688
+      AUROC / 0.8959 accuracy on `screenshot_sim`**, robustness matrix holds across all four
+      variants (0.9688–0.9728 AUROC). Val 0.8891 vs. train 0.8904 — no overfitting. Checkpoint
+      wired into `backend/models/l1_clip_head.pt` via `L1_MODEL_PATH`/`L1_MODEL_DEVICE=cpu` and
+      confirmed running through the live backend: `provider: local-clip-head`, real inference,
+      contributes as the top-weighted signal in the end-to-end demo (`scripts/demo.py`).
+      **Follow-up (not blocking):** CIFAKE is 32×32, so this is a bootstrap-scale run — a
+      larger/higher-res training set would raise the ceiling; and pre-warm the ViT-L/14 encoder
+      weights on any inference host (first load pulls ~1.3GB over the network).
 - [x] L2 real: TruFor subprocess inference (`backend/app/trufor.py`) + heatmap PNG artifact,
       gated on `l2_trufor_configured` (repo dir + model file set), stub fallback otherwise
 - [x] L3 real: Sightengine recapture API call (keys already templated in `.env.example`)
 - [x] L4: add c2patool subprocess check
 - [x] L5 real (v0): `context_checks.py` perceptual-hash + color-histogram similarity —
       listing-photo match/mismatch scoring, plus intra-system reused-photo detection by
-      scanning recent claim artifacts. **Not yet done:** DINOv2/Qdrant embeddings (better
-      matching) or TinEye/SerpAPI (catches photos stolen from *outside* our own claims DB) —
-      tracked as L5 v1 in Phase 1 below.
+      scanning recent claim artifacts.
+- [x] L5 real (v1, zero-training): `backend/app/embeddings.py` blends a frozen-CLIP
+      (ViT-B-32) embedding cosine similarity into the v0 score — pure inference, reuses the
+      `open_clip` loader L1's checkpoint path uses. Degrades to v0-only automatically when
+      torch/open_clip_torch aren't available or the model fails to load (never breaks L5).
+      Config: `L5_EMBEDDING_ENABLED`/`_MODEL`/`_PRETRAINED`/`_DEVICE`/`_WEIGHT`. Tests:
+      `test_embeddings.py`, `test_context_analyzer.py`. **Not yet done:** Qdrant ANN search
+      (only matters once claim volume makes the linear scan too slow) or TinEye/SerpAPI
+      (catches photos stolen from *outside* our own claims DB) — tracked as L5 v2 below.
 - [x] Async claim queue: `POST /v1/claims/async`, `GET /v1/claims/{id}/status`, webhook
       dispatch on completion (`backend/app/jobs.py`, `celery_app.py`) — **operational caveat:**
       needs a running Celery worker + Redis, or `CELERY_TASK_ALWAYS_EAGER=true` for local dev;
@@ -69,7 +116,19 @@ Remaining:
 - [x] Claim persistence + review: SQLite-by-default storage, `GET /v1/claims`,
       `POST /v1/claims/{id}/decision`, `GET /v1/claims/{id}/audit`, artifact upload/download
       (original upload + heatmap) — `backend/app/storage/`, `artifacts.py`
-- [ ] Vertex agents live: set `GOOGLE_CLOUD_PROJECT`, verify semantic inspector on a garbled-text AI image
+- [x] Vertex agents live (2026-07-10): `GOOGLE_CLOUD_PROJECT` set (EduFX project, GenAI App
+      Builder credits — Vertex API calls only, not compute; local auth via `gcloud` ADC, no
+      service-account key needed for dev). **Found and fixed two real bugs getting here:**
+      (1) `.env.example`'s `VERTEX_MODEL=gemini-2.0-flash` 404s as a Vertex publisher model —
+      Vertex's Gemini naming differs from Google AI Studio's; `gemini-2.5-flash` confirmed
+      working live, both `.env.example` and this deploy's `.env` updated. (2) `semantic_inspector`
+      failed on every real call with "unparseable agent output: Unterminated string" — Gemini
+      2.5's hidden "thinking" tokens were eating into `max_output_tokens=1024`, truncating the
+      JSON response mid-string; fixed via `thinking_budget=0` in `backend/app/agents/llm.py`
+      (structured JSON extraction doesn't need extended reasoning; also cuts latency/cost).
+      **Verified live** post-fix: `damage_plausibility` and `semantic_inspector` both return
+      real, coherent, specific Gemini findings (not stub) — e.g. correctly identifying an
+      irrelevant landscape photo as fraud-signal-bearing with a specific explanation.
 - [x] Public webapp scaffold (`webapp/`): upload → fused report, thin client over `/v1/claims`
 - [x] Backend CORS wired for webapp/dashboard origins (`app/config.py::cors_allow_origins`, `main.py` `CORSMiddleware`) — implemented
 - [ ] `npm install` + run webapp against local backend, confirm end-to-end in a browser (not done in this environment)
@@ -92,11 +151,56 @@ Remaining:
       setting it only in `.env` silently never took effect (and the failure was silently
       swallowed). Now reads `settings.fusion_model_path`, logs a warning on fallback. See
       [CORRECTIONS.md](CORRECTIONS.md) 2026-07-08.
-- [ ] Reviewer dashboard hardening: verify against a live API, finish auth/tenant flow, and
-      close UX gaps for production reviewers
-- [ ] Demo script: 5 curated images (real damage, SDXL fake, inpainted, screenshot-of-AI, reused photo)
+- [x] Dashboard auth: `dashboard/app/api.ts` now sends `X-API-Key` (from `NEXT_PUBLIC_API_KEY`)
+      when set; no-op otherwise, so the default `API_AUTH_ENABLED=false` path is unaffected.
+      `dashboard/.env.local.example` added. **Not yet done:** verified against a live
+      `API_AUTH_ENABLED=true` backend with a real issued key — only the default path was
+      exercised live. See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-09.
+- [x] Fixed: `init_db()` only ever called `Base.metadata.create_all()`, which creates missing
+      tables but never alters existing ones — so any SQLite DB created before a column (e.g.
+      `claims.tenant_id`) was added would 500 forever on every query touching it, found via
+      live browser verification of the dashboard-auth change above. Original fix was a
+      lightweight self-healing column-adder; **superseded 2026-07-10 by a real migration
+      framework** — see below.
+- [x] Real migration framework: `backend/alembic/` — `init_db()` now runs `alembic upgrade
+      head` instead of the ad-hoc column-adder, which is gone (its logic lives in the
+      idempotent baseline migration `0001_baseline_schema.py` instead). Future schema
+      changes are real, reviewed migrations (`alembic revision --autogenerate`), not more
+      runtime patching. Verified via CLI (`alembic current` → `0001 (head)`) and full suite
+      (63/63). Found and fixed a real footgun along the way: `env.py`'s Alembic-generated
+      default calls `logging.config.fileConfig()`, which resets the *root* logger's handler
+      list — since this runs on every app startup, it was silently breaking `caplog`-based
+      log-capture tests (and would break the app's own logging in production the same way).
+      See [CORRECTIONS.md](CORRECTIONS.md) 2026-07-10.
+- [ ] Reviewer dashboard hardening: tenant switcher, production UX polish (auth header support
+      landed above)
+- [x] Demo script: `scripts/demo.py` — submits curated claims to a live backend, prints the
+      fused report. 2/5 cases (`screenshot_of_ai`, `reused_photo`) run reproducibly with no
+      external images (reuses `ml/layer1_aigen/augment.py`'s screenshot-sim); the other 3
+      (`real_damage`, `ai_fake`, `inpainted`) need real source images via CLI flags —
+      deliberately not fabricated procedurally (see script docstring). Running it live found
+      and fixed **three real bugs**: L5's reuse detection was dead code without listing URLs,
+      `L5_EMBEDDING_ENABLED` defaulting to `true` could hang a request (and inflated the full
+      test suite from ~20s to 431s) by attempting a network model download inline, and that
+      same embedding call blocked the whole event loop instead of running in a thread. All
+      fixed; see [CORRECTIONS.md](CORRECTIONS.md) 2026-07-10 (2).
+- [x] Fixed live via the demo script above: L5 reuse-photo detection now runs independent of
+      listing URLs, and `L5_EMBEDDING_ENABLED` now defaults to `false` (opt-in, matching
+      L1/L2/L3's pattern) with the embedding call properly backgrounded via `asyncio.to_thread`.
 
-**Exit criterion:** the screenshot-of-AI-image demo case is flagged with a correct explanation.
+**Exit criterion:** the screenshot-of-AI-image demo case is flagged with a correct explanation
+— **met**: `scripts/demo.py`'s `screenshot_of_ai` case is flagged (risk 0.80) in a live run
+against a real backend, with **L1 now a real trained checkpoint** (see the L1 own-model item
+above) contributing as the top-weighted signal (score 0.76, `provider: local-clip-head`) rather
+than a stub. L3 recapture is still a Sightengine stub in this environment, so the "screenshot"
+half of the explanation still leans on L5 reuse-match rather than genuine recapture-artifact
+detection; wiring Sightengine keys (or training T3) would complete that. The L1/AI-generation
+half of the explanation is now genuinely model-driven. **Caveat on demo numbers:** the 3
+reproducible cases run against a plain placeholder image (no real photo/AI-fake supplied), so
+L1's 0.76 there proves the *wiring and fusion contribution*, not discrimination — for a
+meaningful real-vs-AI accuracy demonstration, run `scripts/demo.py --real-damage <photo>
+--ai-fake <ai-image>` with genuine source images (the held-out 0.9688 AUROC is the real
+accuracy number; see KAGGLE_TRAINING.md).
 
 ## Phase 1 — Real product (target: +2–3 months)
 
@@ -107,7 +211,9 @@ Celery worker still applies.)
 - [x] Persistence foundation: database-backed claims, signals, reviewer decisions, and audit log
 - [x] Object storage: local/S3-compatible claim images + heatmaps
 - [x] Learned-fusion tooling scaffold: `ml/fusion/features.py` + `ml/fusion/train_meta.py`
-- [ ] L5 v1: replace v0 hash/histogram with DINOv2/OpenCLIP embeddings + Qdrant ANN search; add external reverse-image search (TinEye/SerpAPI) for photos stolen from outside our own claims DB
+- [ ] L5 v2: Qdrant ANN search to replace the linear scan over `L5_RECENT_CLAIM_WINDOW`; add
+      external reverse-image search (TinEye/SerpAPI) for photos stolen from outside our own
+      claims DB (v1 — embedding blend — landed in Phase 0, see above)
 - [x] Public webapp: anonymous submission path (IP rate-limited via `PUBLIC_SUBMISSION_ENABLED`,
       see Phase 0 above). **Still not done:** image-retention policy stated on the page itself,
       optional free API-key signup for higher usage (see USE_CASES.md §3)
@@ -117,9 +223,17 @@ Celery worker still applies.)
       reviewer ergonomics on top of the existing scaffold
 - [ ] Feedback capture → labeled-claims table (fuel for fusion retraining)
 - [ ] Serverless GPU inference (Modal or RunPod) for L1/L2; scale-to-zero
-- [ ] Held-out-generator benchmark + robustness matrix, published in docs
+- [x] Held-out-generator benchmark + robustness matrix, published in docs — 0.9688 AUROC
+      (screenshot_sim, sdxl/midjourney/flux held out), full matrix in
+      [docs/KAGGLE_TRAINING.md](KAGGLE_TRAINING.md) and the L1 own-model item above
+- [x] Backend containerized: `backend/Dockerfile` (CPU-only torch, no `.env` baked in, checkpoint
+      included if `backend/models/` has one) + root `.dockerignore`. **Not yet done:** actually
+      deployed to Azure — Dockerfile is built and documented (README "Deploying the backend")
+      but not pushed to Azure Container Registry or running on App Service/Container Apps yet;
+      also not yet verified the image actually builds/runs in this environment (no Docker
+      daemon available to test against here) — build and smoke-test it before relying on it.
 - [x] AuthN/AuthZ: per-tenant API keys, admin-token-gated key issuance, per-tenant + public-IP rate limits — landed ahead of schedule during Phase 0, see above
-- [ ] Observability: structured logs, per-claim trace, cost counters (Vertex/API spend per claim)
+- [x] Observability: structured logs, per-claim trace, persisted per-claim/per-tenant cost counters and reporting endpoints (Vertex/HF/Sightengine usage)
 
 **Exit criterion:** honest held-out-generator number published; one pilot-able deployment.
 
@@ -149,7 +263,8 @@ their own reviewers' labels.
 | Screenshot evasion | Recapture detection + screenshot-augmented training + semantic agent | Turn evasion into signal |
 | Training scope | 3 models only (L1 head, fusion meta, recapture CNN) | Feasible solo; everything else pretrained |
 | Headline metric | Held-out-generator AUROC + robustness matrix | The only honest number |
-| Hosting | Local dev → serverless scale-to-zero | Async bursty workload; no idle GPU |
+| Hosting | Local dev → GCP Cloud Run (2026-07-11, supersedes an earlier Azure plan) | Async bursty workload; no idle GPU; Cloud Run's perpetual free tier covers a pilot at $0, separate from and not dependent on the Vertex GenAI credit |
+| Database | SQLite (local dev) → Supabase Postgres (production) — **live-verified 2026-07-12**, not just decided | Cloud Run's filesystem is ephemeral — SQLite would lose the whole claims/audit trail on every restart/redeploy; Supabase over GCP-native Cloud SQL for its free tier, zero provisioning, and built-in pgvector (future L5 v2 ANN search, could retire the standalone Qdrant service). Real project provisioned, `alembic upgrade head` run against it, app traffic + migrations verified end-to-end through Supavisor's transaction/session poolers (`DATABASE_URL`/`DIRECT_URL` — Prisma-style pairing, see `backend/app/config.py`, `backend/alembic/env.py`); 5 real bugs found and fixed only by testing against the real connection — see `docs/CORRECTIONS.md` 2026-07-12 (3) |
 | Agents | Gated Gemini pass, cost-gated regardless of credit | Semantics survive screenshots; spend scales with risk; $1,000 GCP credit is GenAI-App-Builder-scoped, not a blanket Vertex allowance — verify before assuming it applies (AGENTS.md) |
 | Training compute | Free Colab T4, not Vertex credits | $1,000 credit does not cover Colab Enterprise GPU / training compute (verified via Billing → Credits) — training stays $0 on Colab's free tier instead |
 | Git authorship | User-authored commits, no AI co-author trailer | User preference |

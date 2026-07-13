@@ -15,12 +15,15 @@ final call.
 | Doc | Covers |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Master design: positioning, signal layers, fusion, system architecture |
+| [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md) | Run every surface locally — zero-config fast path up to every real integration (Supabase, Vertex, trained L1) |
 | [docs/COMPETITORS.md](docs/COMPETITORS.md) | Full landscape — tools, models, APIs, datasets, our stance on each |
 | [docs/ML_PLAN.md](docs/ML_PLAN.md) | What we train, screenshot augmentation, honest evaluation protocol |
 | [docs/COLAB_TRAINING.md](docs/COLAB_TRAINING.md) | No local GPU: train the L1 head on Colab, all data/checkpoints in Google Drive |
+| [docs/KAGGLE_TRAINING.md](docs/KAGGLE_TRAINING.md) | Same, on Kaggle's free GPU tier instead (use if Colab's quota runs out) |
 | [docs/AGENTS.md](docs/AGENTS.md) | LangGraph multi-agent system (Gemini on Vertex AI), cost gating |
 | [docs/USE_CASES.md](docs/USE_CASES.md) | Product surfaces (API / reviewer dashboard / public webapp) and use cases beyond return fraud |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phase 0–2 checklists and standing decisions |
+| [docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md) | Current development block: forensic-grade accuracy, multi-agent automation, pilot readiness — sequenced |
 | [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | Full-system audit log — bugs found/fixed, finished vs. remaining, dated newest-first |
 
 ## The five signal layers
@@ -57,8 +60,9 @@ status.
 
 ```bash
 # 1. Backend API — SQLite DB + local-disk artifact storage are created automatically
-#    on first run (no external services required). L1 has a local-checkpoint path plus
-#    an HF-ensemble path; L2 has a TruFor adapter. Both fall back safely when unconfigured.
+#    on first run via Alembic migrations (no external services, no manual `alembic upgrade`
+#    needed — init_db() runs it for you). L1 has a local-checkpoint path plus an HF-ensemble
+#    path; L2 has a TruFor adapter. Both fall back safely when unconfigured.
 cd backend
 python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -95,6 +99,62 @@ one service in docker-compose not wired into any code path yet (see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6). L1 still needs either `HF_API_TOKEN` (HF
 ensemble) or `L1_MODEL_PATH` (local checkpoint), and L2 still needs the external TruFor repo
 and weights to stop falling back to its neutral path.
+
+**Schema changes** go through Alembic (`backend/alembic/`), not `Base.metadata.create_all()`
+directly — `init_db()` runs `alembic upgrade head` automatically on every startup (fast no-op
+once a DB is current). For a manual check or CLI migration work: `cd backend && alembic current`
+/ `alembic upgrade head` (reads `DATABASE_URL` from the same `.env`/environment as the app).
+New schema changes should be a real migration (`alembic revision --autogenerate -m "..."`,
+reviewed before committing), not another ad-hoc column patch.
+
+## Deploying the backend
+
+`backend/Dockerfile` builds a production image — CPU-only torch (no CUDA wheels, much smaller),
+Pillow's `libgl1`/`libglib2.0-0` system deps included, no `.env` baked in (config comes from
+environment variables at deploy time, matching `.env.example`'s keys). Build from the repo root
+so `backend/models/` (the trained L1 checkpoint, if present) is in the build context:
+
+```bash
+docker build -f backend/Dockerfile -t truthpixel-backend .
+docker run -p 8000:8000 --env-file backend/.env truthpixel-backend
+```
+
+**On GCP Cloud Run** (same project as Vertex AI, see [docs/AGENTS.md](docs/AGENTS.md) — the
+GenAI App Builder credit is Vertex-API-scoped only and does **not** cover Cloud Run hosting;
+Cloud Run's own perpetual free tier, 2M requests/mo and 180k vCPU-seconds/mo, comfortably
+covers a low-volume pilot regardless): push the image to Artifact Registry, then
+`gcloud run deploy --port 8000` (explicit `--port` matters — see the Dockerfile's comment on
+why the container isn't on Cloud Run's default 8080). Set the same keys from `.env.example` as
+Cloud Run environment variables — at minimum `DATABASE_URL` pointing at a **Supabase Postgres**
+pooler connection string (see `.env.example`'s commented example — must use the
+`postgresql+psycopg://` driver prefix and Supabase's port `6543` pooler, not the direct port,
+since Cloud Run can scale to many concurrent instances each opening a DB connection),
+`STORAGE_BACKEND=s3` with an S3-compatible endpoint (not yet implemented as GCS-native — `local`
+and `s3` are the two working options today), and `L1_MODEL_PATH` pointing at the checkpoint
+baked into the image (`./models/l1_clip_head.pt`). First request after a cold start pulls the
+CLIP encoder weights (~1.3GB) if not already cached in the image layer — consider a startup
+health-check warm-up hit before routing real traffic.
+
+**Database — SQLite locally, Supabase Postgres in production.** SQLite is the zero-setup local
+default and needs nothing changed. In production it's disqualifying, not just non-ideal: Cloud
+Run's filesystem is ephemeral, so a SQLite file is wiped on every restart/redeploy, silently
+losing the entire claims/audit trail. Supabase was chosen over a GCP-native Cloud SQL instance
+for this project's stage — genuine free tier, zero infra provisioning (just a connection
+string), and built-in pgvector that can later replace the standalone Qdrant service tracked in
+[docs/ROADMAP.md](docs/ROADMAP.md)'s L5 v2 item. No backend code changes are needed for either
+DB — `backend/app/storage/repository.py` and `backend/alembic/env.py` both read the single
+`DATABASE_URL` setting, so Alembic creates the full schema automatically on first boot against
+whichever DB is configured.
+
+**CI/CD (GitHub Actions):** `.github/workflows/backend-ci.yml` runs the test suite on every
+push/PR touching `backend/`. `.github/workflows/backend-deploy.yml` builds `backend/Dockerfile`
+and publishes it to GitHub Container Registry on every push to `main` (needs no setup — uses
+the built-in `GITHUB_TOKEN`, and validates the Docker build regardless of GCP config); it then
+deploys to Cloud Run **only if** the required `GCP_*`/`CLOUD_RUN_SERVICE_NAME` repo secrets are
+set — config-gated the same way L1/L2/L3/Vertex are elsewhere in this repo, so the workflow
+stays green with nothing provisioned yet. Auth uses Workload Identity Federation (keyless,
+short-lived tokens, not a long-lived JSON key) — full one-time `gcloud` setup steps are
+documented in the workflow file's header comment.
 
 ## Layer 1 training scaffold
 

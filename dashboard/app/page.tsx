@@ -99,9 +99,10 @@ export default function ReviewerQueuePage() {
 
   return (
     <main className="dashboard-shell">
-      <section className="hero-card">
+      <section className="frame hero-card">
+        <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
         <div>
-          <p className="eyebrow">TruthPixel reviewer dashboard</p>
+          <p className="eyebrow">// truthpixel reviewer dashboard</p>
           <h1>Queue triage for suspicious claim photos</h1>
           <p className="hero-copy">
             Move from risk score to evidence, artifacts, and reviewer decisions without leaving
@@ -144,7 +145,7 @@ export default function ReviewerQueuePage() {
           </div>
           <button
             type="button"
-            className="secondary-button"
+            className="btn-secondary"
             onClick={() => setRefreshTick((current) => current + 1)}
           >
             {refreshing ? "Refreshing..." : "Refresh"}
@@ -163,7 +164,8 @@ export default function ReviewerQueuePage() {
       ) : (
         <section className="queue-grid">
           {claims.map((item) => (
-            <Link key={item.claim_id} href={`/claims/${item.claim_id}`} className="claim-card">
+            <Link key={item.claim_id} href={`/claims/${item.claim_id}`} className="frame claim-card">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
               <div className="card-topline">
                 <StatusPill item={item} />
                 <span className="timestamp">{formatTimestamp(item.updated_at)}</span>
@@ -190,7 +192,7 @@ export default function ReviewerQueuePage() {
               </div>
               <div className="card-footer">
                 <span>{item.fusion.needs_review ? "Manual review recommended" : "Low urgency"}</span>
-                <span className="link-arrow">Open claim</span>
+                <span className="link-arrow">Open claim →</span>
               </div>
             </Link>
           ))}

@@ -1,0 +1,51 @@
+name: Frontend CI
+
+# Typecheck + production build for both Next.js apps. No deploy target is wired for either
+# yet (unlike backend-deploy.yml's Cloud Run pipeline) -- this only proves each app still
+# builds cleanly, so a real deploy step can be added later without inheriting a broken build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "webapp/**"
+      - "dashboard/**"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    paths:
+      - "webapp/**"
+      - "dashboard/**"
+      - ".github/workflows/frontend-ci.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [webapp, dashboard]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        env:
+          # Placeholder values so the Supabase-auth-dependent pages build (the real anon key
+          # is only needed at runtime, not build time -- see app/lib/supabase-browser.ts).
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+        run: npm run build

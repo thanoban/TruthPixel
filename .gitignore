@@ -34,6 +34,7 @@ out/
 dist/
 *.log
 npm-debug.log*
+*.tsbuildinfo
 
 # Object store / local infra
 minio-data/

@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 
 from ..config import get_settings
+from ..forensics_classic import run_classic_forensics
 from ..schemas import ClaimContext, Layer, SignalResult
 from ..signal_artifacts import INTERNAL_HEATMAP_BYTES_KEY
-from ..trufor import run_trufor_inference
+from ..trufor import SUSPICIOUS_PIXEL_THRESHOLD, _render_heatmap_png, run_trufor_inference
 from .base import Analyzer
 
 
@@ -24,7 +25,8 @@ class ForensicsAnalyzer(Analyzer):
     are candidate alternates. Runs on serverless GPU in Phase 1.
 
     When the external TruFor checkout + weights are not configured, this layer
-    degrades to the neutral stub signal so the rest of the pipeline can still run.
+    falls back to classical CPU-only forensics (ELA + noise inconsistency +
+    JPEG ghosting) so L2 still contributes a real signal and heatmap.
     """
 
     layer = Layer.L2_FORENSICS
@@ -32,17 +34,34 @@ class ForensicsAnalyzer(Analyzer):
     async def _run(self, image: bytes, context: ClaimContext, claim_id: str = "") -> SignalResult:
         settings = get_settings()
         if not settings.l2_trufor_configured:
+            result = await asyncio.to_thread(run_classic_forensics, image)
+            heatmap_png, resized_map, _ = _render_heatmap_png(
+                result.anomaly_map,
+                confidence_map=None,
+                image_size=result.image_size,
+            )
             return SignalResult(
                 layer=self.layer,
-                score=0.5,
-                confidence=0.1,
+                score=result.score,
+                confidence=result.confidence,
                 evidence={
-                    "note": _stub_note(settings),
+                    "provider": "classic-cpu",
+                    "fallback_reason": _stub_note(settings),
                     "runtime_status": getattr(settings, "l2_trufor_runtime_status", "stub"),
                     "heatmap_available": False,
                     "heatmap_download_path": None,
                     "heatmap_url": None,
+                    "heatmap_mean": round(float(resized_map.mean()), 4),
+                    "heatmap_max": round(float(resized_map.max()), 4),
+                    "suspicious_pixel_fraction": round(
+                        float((resized_map >= SUSPICIOUS_PIXEL_THRESHOLD).mean()), 4
+                    ),
+                    "ela_inconsistency": result.ela_inconsistency,
+                    "noise_inconsistency": result.noise_inconsistency,
+                    "ghost_inconsistency": result.ghost_inconsistency,
+                    INTERNAL_HEATMAP_BYTES_KEY: heatmap_png,
                 },
+                model_version="classic-forensics-0.1",
             )
 
         result = await asyncio.to_thread(run_trufor_inference, image)

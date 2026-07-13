@@ -1,0 +1,57 @@
+# TruthPixel backend — production image.
+# Build from the repo root so the checkpoint at backend/models/ (if present) is included:
+#   docker build -f backend/Dockerfile -t truthpixel-backend .
+#
+# CPU-only torch/torchvision wheels are used deliberately — the CUDA build is several GB
+# larger and this image targets CPU inference hosts (GCP Cloud Run has no GPU SKU in the
+# tier this project uses). See ML_PLAN.md §6 for the GPU-inference plan (Modal/RunPod) if that
+# ever changes.
+#
+# Port: EXPOSE/CMD stay on 8000 deliberately, not Cloud Run's default 8080 -- Cloud Run is told
+# which port to route to via `gcloud run deploy --port 8000` (see backend-deploy.yml), so the
+# container does NOT need to read $PORT dynamically. Don't "fix" this to 8080 later assuming
+# Cloud Run's convention applies unconditionally -- it doesn't when --port is set explicitly.
+FROM python:3.12-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app/backend
+
+# libgomp1: torch's CPU backend needs the OpenMP runtime, which python:3.12-slim doesn't ship.
+# NOT independently verified by building this image in this environment (no Docker daemon
+# available here) — build and smoke-test before relying on this in a real deploy; see the
+# ROADMAP.md Phase 1 checklist entry for this Dockerfile.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision \
+    && pip install -r requirements.txt
+
+COPY backend/app ./app
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini .
+# Optional: only present if a checkpoint has been trained and placed here (see
+# docs/KAGGLE_TRAINING.md / docs/COLAB_TRAINING.md §7). Safe to omit — L1 falls back to the
+# HF ensemble or the neutral stub when backend/models/ doesn't exist or L1_MODEL_PATH is unset.
+COPY backend/models ./models
+# app/analyzers/l1_aigen.py and app/fusion/learned.py both do `from ml.<pkg> import ...` —
+# ml/ lives at the repo root (a sibling of backend/, not nested under it), so it was never
+# copied into the image before this fix. `python -m uvicorn ...` (no --reload) resolves
+# sys.path[0] to WORKDIR at runtime, so placing ml/ here (under WORKDIR) makes `import
+# ml.layer1_aigen...` resolve exactly like the top-level `from ml...` import statements
+# expect. Found live: the very first real Cloud Run deploy crash-looped on
+# ModuleNotFoundError: No module named 'ml' — this Dockerfile's own comment warned it was
+# "NOT independently verified by building this image" before that; now it has been. Small
+# (~235K), no extra RUN step needed.
+COPY ml ./ml
+
+EXPOSE 8000
+
+# No .env is copied into the image — configuration is injected via environment variables at
+# deploy time (Cloud Run service env vars / --set-env-vars), matching .env.example's keys.
+# See docs/ROADMAP.md's deploy notes.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

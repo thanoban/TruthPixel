@@ -1,9 +1,10 @@
 import logging
+from time import perf_counter
 from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .artifacts import get_artifact_store
@@ -19,6 +20,14 @@ from .auth import (
 from .config import get_settings
 from .graph import run_claim
 from .jobs import enqueue_claim_processing
+from .observability import (
+    TRACE_HEADER,
+    bind_claim_context,
+    clear_context,
+    ensure_trace_id,
+    log_event,
+    log_usage_summary,
+)
 from .signal_artifacts import persist_signal_artifacts
 from .schemas import (
     ArtifactKind,
@@ -30,8 +39,10 @@ from .schemas import (
     ClaimDecisionRequest,
     ClaimListItem,
     ClaimReport,
+    ClaimUsageSummary,
     IssuedApiKeyResponse,
     StoredClaim,
+    TenantUsageSummary,
     TenantCreateRequest,
     TenantResponse,
 )
@@ -45,16 +56,20 @@ from .storage import (
     get_artifact_record,
     get_claim,
     get_claim_audit_events,
+    get_claim_usage_summary,
     get_claim_queue_status,
+    get_tenant_usage_summary,
     init_db,
     list_claim_artifacts,
     list_claims,
+    list_tenant_usage_summaries,
     mark_claim_failed,
     record_decision,
     set_claim_task_info,
 )
 
 logging.basicConfig(level=get_settings().log_level)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -76,6 +91,39 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_trace_context(request: Request, call_next):
+    clear_context()
+    trace_id = ensure_trace_id(request.headers.get(TRACE_HEADER))
+    started = perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = round((perf_counter() - started) * 1000, 2)
+        log_event(
+            logger,
+            "request_failed",
+            method=request.method,
+            path=request.url.path,
+            duration_ms=duration_ms,
+        )
+        clear_context()
+        raise
+
+    duration_ms = round((perf_counter() - started) * 1000, 2)
+    response.headers[TRACE_HEADER] = trace_id
+    log_event(
+        logger,
+        "request_completed",
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+    )
+    clear_context()
+    return response
 
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
@@ -119,6 +167,14 @@ async def analyze_claim(
         listing_image_urls=[u.strip() for u in listing_image_urls.split(",") if u.strip()],
     )
     claim_id = str(uuid4())
+    bind_claim_context(claim_id=claim_id, tenant_id=auth.tenant_id)
+    log_event(
+        logger,
+        "claim_sync_started",
+        content_type=image.content_type or "",
+        byte_size=len(data),
+        public_submission=auth.is_public,
+    )
     create_processing_claim(claim_id, context, tenant_id=auth.tenant_id)
     stored = get_artifact_store().put_bytes(
         claim_id=claim_id,
@@ -144,11 +200,27 @@ async def analyze_claim(
         create_or_update_claim(report, tenant_id=auth.tenant_id)
     except Exception as exc:  # noqa: BLE001
         mark_claim_failed(claim_id, f"{type(exc).__name__}: {exc}")
+        log_event(
+            logger,
+            "claim_sync_failed",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        log_usage_summary(logger, outcome="failed")
         raise
 
     claim = get_claim(claim_id, tenant_id=auth.tenant_id)
     if claim is None:
         raise HTTPException(500, "claim was analyzed but could not be loaded after persistence")
+    log_event(
+        logger,
+        "claim_sync_completed",
+        risk_score=claim.fusion.risk_score,
+        needs_review=claim.fusion.needs_review,
+        signal_count=len(claim.signals),
+        artifact_count=len(claim.artifacts),
+    )
+    log_usage_summary(logger, outcome="completed")
     return claim
 
 
@@ -171,11 +243,19 @@ async def queue_claim_analysis(
         raise HTTPException(400, "empty image upload")
 
     claim_id = str(uuid4())
+    bind_claim_context(claim_id=claim_id, tenant_id=auth.tenant_id)
     context = ClaimContext(
         order_id=order_id,
         product_sku=product_sku,
         claim_reason=claim_reason,
         listing_image_urls=[u.strip() for u in listing_image_urls.split(",") if u.strip()],
+    )
+    log_event(
+        logger,
+        "claim_async_enqueued",
+        content_type=image.content_type or "",
+        byte_size=len(data),
+        webhook_configured=bool(webhook_url),
     )
     create_pending_claim(claim_id, context, webhook_url=webhook_url, tenant_id=auth.tenant_id)
     stored = get_artifact_store().put_bytes(
@@ -200,6 +280,12 @@ async def queue_claim_analysis(
     queue_status = set_claim_task_info(claim_id, task_id)
     if queue_status is None:
         raise HTTPException(500, "claim was queued but task metadata could not be stored")
+    log_event(
+        logger,
+        "claim_async_accepted",
+        task_id=queue_status.task_id or "",
+        status=queue_status.status,
+    )
     return queue_status
 
 
@@ -238,9 +324,16 @@ async def get_claim_status(claim_id: str, auth: TenantAuth) -> ClaimQueueStatus:
 async def submit_claim_decision(
     claim_id: str, request: ClaimDecisionRequest, auth: TenantAuth
 ) -> StoredClaim:
+    bind_claim_context(claim_id=claim_id, tenant_id=auth.tenant_id)
     claim = record_decision(claim_id, request, tenant_id=auth.tenant_id)
     if claim is None:
         raise HTTPException(404, "claim not found")
+    log_event(
+        logger,
+        "claim_decision_recorded",
+        reviewer_id=request.reviewer_id,
+        decision=request.decision.value,
+    )
     return claim
 
 
@@ -250,6 +343,19 @@ async def get_claim_audit(claim_id: str, auth: TenantAuth) -> list[AuditEvent]:
     if claim is None:
         raise HTTPException(404, "claim not found")
     return get_claim_audit_events(claim_id, tenant_id=auth.tenant_id)
+
+
+@app.get("/v1/claims/{claim_id}/usage", response_model=ClaimUsageSummary)
+async def get_claim_usage(claim_id: str, auth: TenantAuth) -> ClaimUsageSummary:
+    usage = get_claim_usage_summary(claim_id, tenant_id=auth.tenant_id)
+    if usage is None:
+        raise HTTPException(404, "claim not found")
+    return usage
+
+
+@app.get("/v1/usage/summary", response_model=TenantUsageSummary)
+async def get_tenant_usage(auth: TenantAuth) -> TenantUsageSummary:
+    return get_tenant_usage_summary(auth.tenant_id)
 
 
 @app.get("/v1/claims/{claim_id}/artifacts", response_model=list[ClaimArtifact])
@@ -342,3 +448,33 @@ async def issue_api_key_route(tenant_id: str, request: ApiKeyCreateRequest) -> I
     if issued is None:
         raise HTTPException(404, "tenant not found")
     return issued
+
+
+@app.get(
+    "/v1/admin/claims/{claim_id}/usage",
+    response_model=ClaimUsageSummary,
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_get_claim_usage(claim_id: str) -> ClaimUsageSummary:
+    usage = get_claim_usage_summary(claim_id)
+    if usage is None:
+        raise HTTPException(404, "claim not found")
+    return usage
+
+
+@app.get(
+    "/v1/admin/tenants/{tenant_id}/usage/summary",
+    response_model=TenantUsageSummary,
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_get_tenant_usage(tenant_id: str) -> TenantUsageSummary:
+    return get_tenant_usage_summary(tenant_id)
+
+
+@app.get(
+    "/v1/admin/usage/summary",
+    response_model=list[TenantUsageSummary],
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_list_usage_summaries() -> list[TenantUsageSummary]:
+    return list_tenant_usage_summaries()

@@ -12,7 +12,7 @@ import json
 from langchain_core.messages import HumanMessage
 
 from ..schemas import AgentFinding
-from .llm import get_vision_llm, image_content_block
+from .llm import get_vision_llm, image_content_block, record_vertex_usage
 
 PROMPT = """You are a forensic image analyst for e-commerce return-fraud review.
 Examine this customer-submitted "damaged product" photo for SEMANTIC signs of AI
@@ -41,6 +41,12 @@ async def run_semantic_inspector(image: bytes) -> AgentFinding:
         )
     msg = HumanMessage(content=[{"type": "text", "text": PROMPT}, image_content_block(image)])
     response = await llm.ainvoke([msg])
+    record_vertex_usage(
+        operation="semantic_inspector",
+        model_name=llm.model_name,
+        prompt_text=PROMPT,
+        response=response,
+    )
     try:
         data = json.loads(response.content.strip().removeprefix("```json").removesuffix("```"))
         return AgentFinding(

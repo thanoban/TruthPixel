@@ -29,12 +29,43 @@ implicit local-dev tenant and this just works. If you turn auth on
 `POST /v1/claims` calls (it never sends an `X-API-Key`) will get a 401. See
 `.env.example`'s "Auth & rate limits" section and `backend/app/auth.py`.
 
+## Free-tier-then-login (Google + email/password via Supabase Auth)
+
+Anonymous visitors get `PUBLIC_RATE_LIMIT_REQUESTS` free checks per IP (backend default: 5/
+hour). A submission past that limit returns 429; this UI catches it and offers a link to
+`/login` instead of just an error message. Signing in (Google or email/password) doesn't
+remove the limit — it raises it, and re-scopes it to the account instead of the IP
+(`PUBLIC_USER_RATE_LIMIT_REQUESTS`, default 25/hour) via a Supabase Auth JWT sent as
+`Authorization: Bearer <token>` on submit, verified server-side in
+`backend/app/supabase_auth.py`.
+
+This is deliberately **not** a route-level auth gate like the dashboard's `middleware.ts` —
+the page must stay fully usable anonymously up to the free limit. `app/auth-header.tsx` and
+the submit flow in `app/page.tsx` both degrade gracefully (no crash, just skip the
+authenticated path) if `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` aren't set.
+
+Setup (one-time, same Supabase project as the dashboard and `DATABASE_URL`/`DIRECT_URL`):
+
+1. Email/password is enabled by default in Supabase. Unlike the dashboard, this surface
+   *does* expose public sign-up (`app/login/page.tsx`'s "Create one" toggle) — these are
+   real end users, not pre-provisioned reviewers.
+2. Google provider: same steps as `dashboard/README.md`'s Google setup, reusing the same
+   Google Cloud OAuth client — add `http://localhost:3000` as an additional authorized
+   JavaScript origin alongside the dashboard's `:3001`.
+3. Copy `NEXT_PUBLIC_SUPABASE_URL` and the **anon public** key into `.env.local`.
+4. Backend also needs `SUPABASE_URL` set (see `.env.example`) to verify the JWTs this page
+   sends. Without it, the backend deliberately falls back to the anonymous IP limit instead
+   of 401ing a signed-in user (`app/supabase_auth.py::SupabaseAuthNotConfigured`,
+   `app/auth.py::allow_public_submission`) — set `SUPABASE_URL` to actually get the higher
+   `PUBLIC_USER_RATE_LIMIT_REQUESTS` limit; until then, signing in raises no error but also
+   doesn't raise the limit.
+
 ## Status
 
-`npm install` + `npm run dev` verified working against a live local backend (boots on
-`:3000`, renders the upload form, `GET /` returns 200 — see `.codex/runlogs/webapp.out.log`
-for the local verification transcript). Full claim-submission-to-report round trip through
-the browser UI has not been re-verified since the `StoredClaim` type fix landed. See
+`npm run build` re-verified successfully in the current checkout after a UI polish pass that
+keeps the same backend contract (`POST /v1/claims`) but upgrades the public experience into a
+more production-feeling single-image upload/report surface. The browser round-trip still depends
+on a running backend with anonymous submissions enabled as described above. See
 [docs/ROADMAP.md](../docs/ROADMAP.md) for what's deferred (retention policy, optional
 API-key signup for higher usage) and [docs/CORRECTIONS.md](../docs/CORRECTIONS.md) for the
 latest full-system audit.

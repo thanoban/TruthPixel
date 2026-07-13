@@ -1,0 +1,166 @@
+name: Backend Deploy
+
+# Build the backend image on every push to main, always publish it to GitHub Container
+# Registry (needs no extra setup -- uses the built-in GITHUB_TOKEN; validates the Docker build
+# regardless of GCP config), then deploy to GCP Cloud Run IF the required secrets are present.
+# The Cloud Run step is intentionally config-gated rather than required, matching this repo's
+# pattern elsewhere (L1/L2/L3/Vertex all fall back gracefully when unconfigured) -- until the
+# one-time GCP setup below is done, this workflow still runs green and just skips that job.
+#
+# Auth uses Workload Identity Federation (keyless, short-lived tokens), not a downloaded
+# service-account JSON key sitting in a GitHub secret indefinitely -- this is GCP's recommended
+# approach for CI/CD. One-time setup (run once, from a machine with `gcloud` authenticated to
+# the target project -- both artifactregistry.googleapis.com and run.googleapis.com must be
+# enabled on the project first, and the project needs an active billing account linked --
+# neither Artifact Registry nor Cloud Run will enable without one, even for free-tier usage):
+#
+# Done 2026-07-12 for <gcp-project-id> (this repo's shared GCP project -- responsive-
+# sun-491204-e0 was the original target but its billing account had hit GCP's 5-project
+# billing-link quota, so billing was moved to <gcp-project-id> instead; see
+# docs/CORRECTIONS.md). Re-run this block only if the infra needs to be recreated elsewhere.
+#
+#   PROJECT_ID=<your-gcp-project-id>          # e.g. <gcp-project-id>
+#   PROJECT_NUMBER=<your-gcp-project-number>  # gcloud projects describe $PROJECT_ID --format='value(projectNumber)'
+#   REGION=us-central1                        # match GOOGLE_CLOUD_LOCATION used for Vertex AI
+#   REPO=truthpixel                           # Artifact Registry repo name
+#   SA_NAME=truthpixel-deployer
+#   GITHUB_REPO=thanoban/TruthPixel           # owner/repo, exact match required below
+#
+#   # 1. Artifact Registry repo for the image
+#   gcloud artifacts repositories create $REPO --repository-format=docker --location=$REGION --project=$PROJECT_ID
+#
+#   # 2. Deploy service account + roles
+#   gcloud iam service-accounts create $SA_NAME --project=$PROJECT_ID
+#   for ROLE in roles/run.admin roles/artifactregistry.writer roles/iam.serviceAccountUser; do
+#     gcloud projects add-iam-policy-binding $PROJECT_ID \
+#       --member="serviceAccount:${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --role="$ROLE"
+#   done
+#
+#   # 3. Workload Identity Pool + Provider trusting GitHub's OIDC issuer
+#   gcloud iam workload-identity-pools create github-pool --project=$PROJECT_ID --location=global
+#   gcloud iam workload-identity-pools providers create-oidc github-provider \
+#     --project=$PROJECT_ID --location=global --workload-identity-pool=github-pool \
+#     --issuer-uri="https://token.actions.githubusercontent.com" \
+#     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+#     --attribute-condition="assertion.repository=='${GITHUB_REPO}'"
+#
+#   # 4. Bind the service account to the pool, restricted to this exact repo
+#   gcloud iam service-accounts add-iam-policy-binding \
+#     "${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --project=$PROJECT_ID \
+#     --role="roles/iam.workloadIdentityUser" \
+#     --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/${GITHUB_REPO}"
+#
+#   # 5. Add six repo secrets (Settings -> Secrets and variables -> Actions):
+#      - GCP_PROJECT_ID: $PROJECT_ID
+#      - GCP_REGION: $REGION
+#      - GCP_ARTIFACT_REPO: $REPO
+#      - CLOUD_RUN_SERVICE_NAME: e.g. truthpixel-backend
+#      - GCP_WORKLOAD_IDENTITY_PROVIDER: full resource name --
+#        projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+#      - GCP_SERVICE_ACCOUNT: ${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
+#
+#   # 6. Set the Cloud Run service's runtime env vars (DATABASE_URL, L1_MODEL_PATH, etc. --
+#      matching backend/.env.example's keys) via `gcloud run services update --set-env-vars` or
+#      the Console -- the image ships with no .env baked in by design.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/truthpixel-backend
+
+jobs:
+  # Job-level `if:` conditions cannot reference the `secrets` context at all (only `github`,
+  # `inputs`, `needs`, `vars` are available there) -- `deploy-gcp`'s old
+  # `if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}` failed GitHub's own workflow
+  # schema validation, which rejects the ENTIRE file before scheduling any job at all (0 jobs,
+  # instant "failure", no logs -- this is what every run of this workflow hit, going back to
+  # before this fix). `secrets` IS available inside a step, so this job runs one step to read
+  # the secret and expose a `needs.*.outputs.*` value instead, which job-level `if:` CAN read.
+  # See docs/CORRECTIONS.md 2026-07-12 (5) for how this was found (actionlint).
+  check-gcp-config:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: meta
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          docker build -f backend/Dockerfile -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  deploy-gcp:
+    needs: [build-and-push, check-gcp-config]
+    runs-on: ubuntu-latest
+    if: needs.check-gcp-config.outputs.configured == 'true'
+    permissions:
+      contents: read
+      id-token: write # required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ secrets.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Build and push to Artifact Registry
+        id: ar
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REPO }}/truthpixel-backend"
+          docker build -f backend/Dockerfile -t "$IMAGE:${{ github.sha }}" .
+          docker push "$IMAGE:${{ github.sha }}"
+          echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          region: ${{ secrets.GCP_REGION }}
+          service: ${{ secrets.CLOUD_RUN_SERVICE_NAME }}
+          image: ${{ steps.ar.outputs.image }}
+          # Explicit --port 8000 -- see backend/Dockerfile's comment on why the container isn't
+          # on Cloud Run's default 8080.
+          flags: "--port=8000"

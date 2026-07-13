@@ -3,7 +3,9 @@
 > What we train, what we don't, and how we prove it honestly.
 > Part of the TruthPixel doc suite: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 > [COMPETITORS.md](COMPETITORS.md) · [AGENTS.md](AGENTS.md) · [ROADMAP.md](ROADMAP.md) ·
-> [COLAB_TRAINING.md](COLAB_TRAINING.md) (no local GPU — train T1 on Colab, data lives in Drive)
+> [BENCHMARK.md](BENCHMARK.md) ·
+> [COLAB_TRAINING.md](COLAB_TRAINING.md) (no local GPU — train T1 on Colab, data lives in Drive) ·
+> [KAGGLE_TRAINING.md](KAGGLE_TRAINING.md) (same, on Kaggle's free tier instead)
 
 ## 0. Scope discipline
 
@@ -142,4 +144,8 @@ ml/
   paid GPU option on its own merits rather than assuming this credit applies.
 - **Inference:** local during dev → Modal/RunPod serverless scale-to-zero in Phase 1
   (claims are async & bursty; an always-on GPU box is wasted money).
-- **Caching:** CLIP/DINOv2 embeddings computed once per image, reused by L1 and L5.
+- **Caching:** still aspirational, not implemented. L1 (`ViT-L-14`, when a local checkpoint is
+  configured) and L5 v1 (`ViT-B-32`, `backend/app/embeddings.py`) each load and run their own
+  frozen CLIP encoder independently — different default model sizes, no shared cache. Sharing
+  would need matching encoder configs plus a per-claim embedding cache; worth doing once L1's
+  own checkpoint ships (same claim image, one CLIP forward pass, reused by both layers).
