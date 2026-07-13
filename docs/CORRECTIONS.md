@@ -4,6 +4,70 @@
 > an honest finished-vs-remaining snapshot. Each entry is dated; newest first. This is an audit
 > trail, not a plan — see [ROADMAP.md](ROADMAP.md) for the phase-by-phase plan itself.
 
+## 2026-07-12 (5) — First real Cloud Run deploy: 3 genuine bugs found, all fixed; live-verified
+
+Followed up on (4)'s infra provisioning by actually building and deploying all three
+services (backend, webapp, dashboard) to Cloud Run for the first time. This surfaced real
+bugs no amount of local testing had caught, because local dev's Python process picked up
+an accidental `ml/`-importable working directory that a clean container build doesn't have.
+
+**Bug 1 — `backend/Dockerfile` never copied the top-level `ml/` package.**
+`app/analyzers/l1_aigen.py` and `app/fusion/learned.py` both do `from ml.<pkg> import ...`,
+but `ml/` lives at the repo root (a sibling of `backend/`, not nested under it) and the
+Dockerfile only ever copied `backend/app`, `backend/alembic`, `backend/models`. First deploy
+crash-looped on `ModuleNotFoundError: No module named 'ml'` — confirmed via real Cloud Run
+startup logs (0 jobs scheduled, instant failure). This had silently worked in every local
+dev session this whole project because of an as-yet-unexplained local sys.path difference
+(possibly IDE/harness-injected `PYTHONPATH`) that a bare `docker run` doesn't have — the
+Dockerfile's own comment already warned it was "NOT independently verified by building this
+image" before this session. Fixed: `COPY ml ./ml` in the Dockerfile, placed under `WORKDIR
+/app/backend` so `sys.path[0]` (which `python -m uvicorn` resolves to the working directory)
+finds it exactly where the `from ml...` imports expect.
+
+**Bug 2 — Cloud Build defaults to `.gitignore` for source-upload exclusions when no
+`.gcloudignore` exists**, and `.gitignore` excludes `*.pt` — silently stripping the trained
+L1 checkpoint (`backend/models/l1_clip_head.pt`) out of the build context entirely. Caught
+by noticing the uploaded tarball was suspiciously small (772.8 KiB) before even attempting a
+deploy. Fixed: added `.gcloudignore` mirroring `.dockerignore`'s intent (exclude
+`node_modules`/`.venv`/local state, but not model weights).
+
+**Bug 3 — the real memory footprint of L1's trained checkpoint is much higher than
+assumed.** First deploy attempt (2Gi) OOM-killed mid-request loading the ViT-L-14 encoder.
+Iteratively narrowed the real peak via three data points (2Gi → killed ~300MB over limit,
+3Gi → ~140MB over, 3.5Gi → only ~10MB over) rather than guessing round numbers — converges
+on a true peak of roughly 3.6-3.7GB (model weights + the full app import chain: torch,
+langchain-google-vertexai, google-cloud-aiplatform, etc., all loaded at process startup).
+Thread-limiting (`OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1`) did not meaningfully reduce this —
+confirms the pressure is from loaded weights/library baseline, not PyTorch's per-thread
+buffers. Settled on 4Gi as the real minimum, not an arbitrary round number.
+
+**New Dockerfiles added**: `webapp/Dockerfile`, `dashboard/Dockerfile` — full-image Next.js
+builds (not `output: "standalone"`, since `webapp/next.config.js` deliberately disables
+`outputFileTracing` for an unrelated local-Windows-dev bug; touching that config for Docker
+wasn't worth the risk of reintroducing it). `NEXT_PUBLIC_*` vars are passed as `--build-arg`
+since Next.js inlines them into the client bundle at build time, not read at container start.
+
+**Live-verified end-to-end after all three fixes**: real claim submission through the
+deployed backend returned `provider: local-clip-head` (the real trained checkpoint, not a
+stub/fallback) with a real fused risk score; webapp and dashboard both load and correctly
+call the real backend URL; dashboard's server-side proxy correctly authenticates with a
+real tenant API key created via the live admin endpoint.
+
+**Deliberately not automated further**: a Cloud Scheduler-based "warm the backend 6-7pm
+daily" toggle was attempted (to avoid cold starts during a known usage window) but never
+got working despite exhausting the standard IAM setup (resource-level role, project-level
+custom role scoped to only `run.services.get`/`run.services.update`, and the Cloud
+Scheduler service agent's required `iam.serviceAccountTokenCreator` grant) — Cloud Scheduler
+→ Cloud Run Admin API calls persistently 403 despite every documented prerequisite being in
+place and confirmed via `testIamPermissions`. The underlying mechanism (`POST` +
+`X-HTTP-Method-Override: PATCH` against the v2 Admin API) was independently confirmed
+working via a manual authenticated call. Root cause not found; deployment currently relies
+on plain scale-to-zero (`min-instances=0`) instead — functionally fine (zero cost when
+idle), just means a cold start (~60-90s) on the first request after any idle period, not
+guaranteed-warm during a specific window. The two scheduler jobs
+(`backend-scale-up`/`backend-scale-down`) are left in place, enabled, in case this turns out
+to be a propagation-time issue that resolves itself later.
+
 ## 2026-07-12 (4) — GCP deploy infra provisioned; billing quota forced a project move
 
 Set up the one-time GCP infrastructure `backend-deploy.yml`'s own comment block documents

@@ -1,0 +1,27 @@
+# Cloud Build source upload context — must NOT be auto-derived from .gitignore (gcloud's
+# default when this file is absent), since .gitignore excludes *.pt (the trained L1 CLIP-head
+# checkpoint the backend Dockerfile bakes into the image via COPY backend/models). Mirrors
+# .dockerignore's intent instead: exclude local-only state and heavy directories that get
+# reinstalled fresh inside the build (node_modules, .venv), but keep everything the
+# Dockerfiles actually COPY.
+.env
+.env.local
+*.key
+*.pem
+
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+backend/truthpixel.db
+backend/artifact_storage/
+
+node_modules/
+webapp/.next/
+dashboard/.next/
+
+.git/
+.codex/
+.claude/

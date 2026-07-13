@@ -38,6 +38,16 @@ COPY backend/alembic.ini .
 # docs/KAGGLE_TRAINING.md / docs/COLAB_TRAINING.md §7). Safe to omit — L1 falls back to the
 # HF ensemble or the neutral stub when backend/models/ doesn't exist or L1_MODEL_PATH is unset.
 COPY backend/models ./models
+# app/analyzers/l1_aigen.py and app/fusion/learned.py both do `from ml.<pkg> import ...` —
+# ml/ lives at the repo root (a sibling of backend/, not nested under it), so it was never
+# copied into the image before this fix. `python -m uvicorn ...` (no --reload) resolves
+# sys.path[0] to WORKDIR at runtime, so placing ml/ here (under WORKDIR) makes `import
+# ml.layer1_aigen...` resolve exactly like the top-level `from ml...` import statements
+# expect. Found live: the very first real Cloud Run deploy crash-looped on
+# ModuleNotFoundError: No module named 'ml' — this Dockerfile's own comment warned it was
+# "NOT independently verified by building this image" before that; now it has been. Small
+# (~235K), no extra RUN step needed.
+COPY ml ./ml
 
 EXPOSE 8000
 

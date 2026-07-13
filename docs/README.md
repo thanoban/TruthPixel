@@ -20,6 +20,7 @@ If you are new to the project, start here before jumping straight into code.
 - [ARCHITECTURE.md](ARCHITECTURE.md): high-level system design and product thinking
 - [ROADMAP.md](ROADMAP.md): what is built and what still remains
 - [EXECUTION_PLAN.md](EXECUTION_PLAN.md): current work order
+- [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md): step-by-step guide to running every surface locally, from zero-config to every real integration (Supabase, Vertex, trained L1)
 - [USE_CASES.md](USE_CASES.md): surfaces and user types
 - [ML_PLAN.md](ML_PLAN.md): ML strategy and training direction
 - [BENCHMARK.md](BENCHMARK.md): measured results from the current trained model artifacts
