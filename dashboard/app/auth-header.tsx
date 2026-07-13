@@ -29,7 +29,7 @@ export function AuthHeader() {
   return (
     <div className="auth-header">
       <span>{email}</span>
-      <button type="button" className="secondary-button" onClick={() => void signOut()}>
+      <button type="button" className="btn-secondary" onClick={() => void signOut()}>
         Sign out
       </button>
     </div>

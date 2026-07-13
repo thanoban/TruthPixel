@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchClaim, fetchClaimAudit, fetchClaimStatus, submitDecision } from "../../api";
 import { createSupabaseBrowserClient } from "../../lib/supabase-browser";
+import { riskStamp, riskToneName } from "../../theme";
 import type { AuditEvent, ClaimArtifact, ReviewDecisionValue, StoredClaim } from "../../types";
 import {
   LAYER_LABELS,
@@ -17,17 +18,76 @@ function getArtifact(claim: StoredClaim | null, kind: ClaimArtifact["kind"]): Cl
   return claim?.artifacts.find((artifact) => artifact.kind === kind) ?? null;
 }
 
+// Drag-to-reveal comparison between the original upload and the forensic heatmap overlay —
+// shares the same implementation as webapp/app/page.tsx's HeatmapCompareSlider (duplicated,
+// not imported — the two Next.js apps have no shared package to import across).
+function HeatmapCompareSlider({ originalSrc, heatmapSrc }: { originalSrc: string; heatmapSrc: string }) {
+  const [pct, setPct] = useState(50);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+
+  function updateFromClientX(clientX: number) {
+    const el = frameRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const next = ((clientX - rect.left) / rect.width) * 100;
+    setPct(Math.min(100, Math.max(0, next)));
+  }
+
+  useEffect(() => {
+    function onMove(event: PointerEvent) {
+      if (!draggingRef.current) return;
+      updateFromClientX(event.clientX);
+    }
+    function onUp() {
+      draggingRef.current = false;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={frameRef}
+      className="compare-frame"
+      onPointerDown={(event) => {
+        draggingRef.current = true;
+        updateFromClientX(event.clientX);
+      }}
+    >
+      <img src={originalSrc} alt="Original upload" className="compare-base" />
+      <div className="compare-clip" style={{ width: `${pct}%` }}>
+        <img src={heatmapSrc} alt="Heatmap overlay" className="compare-overlay" />
+      </div>
+      <div className="compare-handle" style={{ left: `${pct}%` }}>
+        <div className="compare-handle-line" />
+        <div className="compare-handle-grip">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="18 8 22 12 18 16" />
+            <polyline points="6 8 2 12 6 16" />
+            <line x1="2" x2="22" y1="12" y2="12" />
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ClaimDetailPage({ params }: { params: { claimId: string } }) {
   const [claim, setClaim] = useState<StoredClaim | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [overlayOpacity, setOverlayOpacity] = useState(55);
   const [reviewerId, setReviewerId] = useState("");
   const [decision, setDecision] = useState<ReviewDecisionValue>("reject");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
 
   // Prefill from the signed-in Google identity (Supabase Auth session) instead of a free-text
   // guess — ties the audit trail's reviewer_id to a real authenticated account. Still editable:
@@ -128,9 +188,9 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
     <main className="detail-shell">
       <div className="detail-header">
         <Link href="/" className="back-link">
-          Back to queue
+          ← Back to queue
         </Link>
-        <button type="button" className="secondary-button" onClick={() => setRefreshTick((current) => current + 1)}>
+        <button type="button" className="btn-secondary" onClick={() => setRefreshTick((current) => current + 1)}>
           Refresh
         </button>
       </div>
@@ -143,70 +203,72 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
         </div>
       ) : (
         <>
-          <section className="detail-hero">
-            <div>
-              <p className="eyebrow">Claim {claim.claim_id}</p>
-              <h1>{claim.context.order_id || "Unlabeled review item"}</h1>
-              <p className="hero-copy">
-                {claim.context.claim_reason || "No customer claim reason was submitted."}
-              </p>
-            </div>
-            <div className="detail-metrics">
-              <div className="metric-card">
-                <span>Risk score</span>
-                <strong>{formatPercent(claim.fusion.risk_score)}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Status</span>
-                <strong>{claim.decision?.decision.replace(/_/g, " ") || claim.status}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Updated</span>
-                <strong>{formatTimestamp(claim.updated_at)}</strong>
-              </div>
-            </div>
-          </section>
+          {(() => {
+            const tone = riskToneName(claim.fusion.risk_score);
+            const stamp = riskStamp(claim.fusion.risk_score);
+            const offset = 314.159 * (1 - claim.fusion.risk_score);
+            return (
+              <section className="frame detail-hero">
+                <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+                <svg width="84" height="84" viewBox="0 0 120 120" style={{ flex: "none" }}>
+                  <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surface2)" strokeWidth="9" />
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="50"
+                    fill="none"
+                    stroke={`var(--${tone})`}
+                    strokeWidth="9"
+                    strokeLinecap="round"
+                    strokeDasharray="314.159"
+                    strokeDashoffset={offset}
+                    transform="rotate(-90 60 60)"
+                  />
+                </svg>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p className="eyebrow">// claim {claim.claim_id.slice(0, 8)}</p>
+                  <h1 style={{ fontSize: 20 }}>{claim.context.order_id || "Unlabeled review item"}</h1>
+                  <p className="hero-copy" style={{ margin: "8px 0 0" }}>
+                    {claim.context.claim_reason || "No customer claim reason was submitted."}
+                  </p>
+                </div>
+                <div style={{ textAlign: "right", flex: "none" }}>
+                  <div className="risk-number">{formatPercent(claim.fusion.risk_score)}</div>
+                  <div className="risk-label" style={{ color: `var(--${tone})` }}>
+                    {claim.decision?.decision.replace(/_/g, " ") || claim.status}
+                  </div>
+                </div>
+                <div className="stamp" style={{ color: `var(--${tone})`, borderColor: `var(--${tone})` }}>
+                  {stamp}
+                </div>
+              </section>
+            );
+          })()}
 
           <section className="detail-grid">
-            <article className="panel preview-panel">
+            <article className="frame panel">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
               <div className="panel-header">
                 <div>
-                  <h2>Artifact preview</h2>
-                  <p>Original upload with optional heatmap overlay from the artifact store.</p>
+                  <div className="section-label">// 01 · manipulation_heatmap.render</div>
+                  <p>Drag to compare original vs. forensic overlay.</p>
                 </div>
-                {heatmapArtifact && (
-                  <label className="opacity-control">
-                    Heatmap opacity
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={overlayOpacity}
-                      onChange={(event) => setOverlayOpacity(Number(event.target.value))}
-                    />
-                  </label>
-                )}
               </div>
-              {originalArtifact ? (
-                <div className="overlay-stage">
-                  <img
-                    src={artifactProxyPath(originalArtifact.claim_id, originalArtifact.id)}
-                    alt="Original claim upload"
-                    className="stage-image"
-                  />
-                  {heatmapArtifact && (
-                    <img
-                      src={artifactProxyPath(heatmapArtifact.claim_id, heatmapArtifact.id)}
-                      alt="Heatmap overlay"
-                      className="stage-image overlay-image"
-                      style={{ opacity: overlayOpacity / 100 }}
-                    />
-                  )}
-                </div>
+              {originalArtifact && heatmapArtifact ? (
+                <HeatmapCompareSlider
+                  originalSrc={artifactProxyPath(originalArtifact.claim_id, originalArtifact.id)}
+                  heatmapSrc={artifactProxyPath(heatmapArtifact.claim_id, heatmapArtifact.id)}
+                />
+              ) : originalArtifact ? (
+                <img
+                  src={artifactProxyPath(originalArtifact.claim_id, originalArtifact.id)}
+                  alt="Original claim upload"
+                  style={{ width: "100%", maxHeight: 300, objectFit: "cover" }}
+                />
               ) : (
                 <p className="muted-copy">No original artifact is stored for this claim yet.</p>
               )}
-              {heatmapDiagnostic && <p className="muted-copy">{heatmapDiagnostic}</p>}
+              {heatmapDiagnostic && <p className="muted-copy" style={{ marginTop: 8 }}>{heatmapDiagnostic}</p>}
               <div className="artifact-strip">
                 {claim.artifacts.map((artifact) => (
                   <a
@@ -223,10 +285,11 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               </div>
             </article>
 
-            <article className="panel">
+            <article className="frame panel">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
               <div className="panel-header">
                 <div>
-                  <h2>Decision</h2>
+                  <div className="section-label">// 02 · reviewer_decision.submit</div>
                   <p>Record the final reviewer outcome on the stored claim.</p>
                 </div>
               </div>
@@ -273,40 +336,54 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               )}
             </article>
 
-            <article className="panel">
+            <article className="frame panel">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
               <div className="panel-header">
                 <div>
-                  <h2>Signal breakdown</h2>
+                  <div className="section-label">// 03 · signal_breakdown.json</div>
                   <p>Scores, confidence, and fusion contribution by analyzer layer.</p>
                 </div>
               </div>
-              <table className="signal-table">
-                <thead>
-                  <tr>
-                    <th>Signal</th>
-                    <th>Score</th>
-                    <th>Confidence</th>
-                    <th>Contribution</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {claim.signals.map((signal) => (
-                    <tr key={signal.layer}>
-                      <td>{LAYER_LABELS[signal.layer] ?? signal.layer}</td>
-                      <td>{signal.error ? "unavailable" : formatPercent(signal.score)}</td>
-                      <td>{formatPercent(signal.confidence)}</td>
-                      <td>{formatPercent(claim.fusion.contributions[signal.layer])}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {claim.signals.map((signal) => {
+                const score = signal.score ?? 0;
+                const tone = riskToneName(score);
+                const expanded = expandedLayer === signal.layer;
+                return (
+                  <div className="signal-row-wrap" key={signal.layer}>
+                    <div className="signal-row" onClick={() => setExpandedLayer(expanded ? null : signal.layer)}>
+                      <span
+                        className="badge"
+                        style={{ background: `color-mix(in oklch, var(--${tone}) 16%, transparent)`, color: `var(--${tone})` }}
+                      >
+                        L{signal.layer.slice(1, 2)}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="signal-label">{LAYER_LABELS[signal.layer] ?? signal.layer}</div>
+                        <div className="bar-track">
+                          <div className="bar-fill" style={{ width: `${Math.round(score * 100)}%`, background: `var(--${tone})` }} />
+                        </div>
+                      </div>
+                      <div className="score-val">{signal.error ? "—" : formatPercent(signal.score)}</div>
+                      <span className={expanded ? "chevron expanded" : "chevron"}>▸</span>
+                    </div>
+                    {expanded && (
+                      <div className="expand-pad">
+                        <div className="expand-note">
+                          {signal.error || (typeof signal.evidence.note === "string" ? signal.evidence.note : "no note")}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               <p className="report-copy">{claim.report_text}</p>
             </article>
 
-            <article className="panel">
+            <article className="frame panel">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
               <div className="panel-header">
                 <div>
-                  <h2>Audit trail</h2>
+                  <div className="section-label">// 04 · audit_trail.log</div>
                   <p>Append-only event history from claim queueing through review action.</p>
                 </div>
               </div>
@@ -325,10 +402,11 @@ export default function ClaimDetailPage({ params }: { params: { claimId: string 
               </div>
             </article>
 
-            <article className="panel">
+            <article className="frame panel">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
               <div className="panel-header">
                 <div>
-                  <h2>Agent findings</h2>
+                  <div className="section-label">// 05 · agent_findings.log</div>
                   <p>Optional semantic reviewer notes captured during the agent pass.</p>
                 </div>
               </div>

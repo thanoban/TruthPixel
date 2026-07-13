@@ -85,78 +85,80 @@ function LoginForm() {
   }
 
   return (
-    <main className="page-shell">
-      <section className="hero-grid" style={{ gridTemplateColumns: "1fr" }}>
-        <div className="hero-card" style={{ maxWidth: 440, margin: "40px auto" }}>
-          <p className="eyebrow">TruthPixel account</p>
-          <h1>{mode === "sign-in" ? "Sign in to keep checking images" : "Create a free account"}</h1>
-          {limitReached && (
-            <p className="tagline">
-              You've used your free anonymous checks for now. Sign in (or create a free account)
-              to keep going with a higher limit.
-            </p>
-          )}
-          {error && <p className="error-banner">{error}</p>}
-          {notice && <p className="notice-banner">{notice}</p>}
-
-          <button type="button" onClick={() => void signInWithGoogle()} disabled={loading}>
-            {loading ? "Redirecting..." : "Continue with Google"}
-          </button>
-
-          <div className="login-divider">
-            <span>or</span>
-          </div>
-
-          <form className="login-form" onSubmit={(event) => void onSubmitEmail(event)}>
-            <label>
-              Email
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-                autoComplete="email"
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                minLength={6}
-                autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
-              />
-            </label>
-            <button type="submit" disabled={loading || !email || !password}>
-              {loading
-                ? "Please wait..."
-                : mode === "sign-in"
-                  ? "Sign in with email"
-                  : "Create account"}
-            </button>
-          </form>
-
-          <p className="login-note">
-            {mode === "sign-in" ? (
-              <>
-                Don't have an account?{" "}
-                <button type="button" className="link-button" onClick={() => setMode("sign-up")}>
-                  Create one
-                </button>
-              </>
-            ) : (
-              <>
-                Already have an account?{" "}
-                <button type="button" className="link-button" onClick={() => setMode("sign-in")}>
-                  Sign in
-                </button>
-              </>
-            )}
-          </p>
+    <main className="login-shell">
+      <div className="frame login-card">
+        <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+        <div className="eyebrow">
+          <span className="eyebrow-dot" />
+          TruthPixel account
         </div>
-      </section>
+        <h1>{mode === "sign-in" ? "Sign in to keep checking images" : "Create a free account"}</h1>
+        {limitReached && (
+          <p className="page-sub" style={{ maxWidth: "none", margin: 0 }}>
+            You've used your free anonymous checks for now. Sign in (or create a free account)
+            to keep going with a higher limit.
+          </p>
+        )}
+        {error && <p className="error">{error}</p>}
+        {notice && <p className="notice-banner">{notice}</p>}
+
+        <button type="button" className="btn-primary" onClick={() => void signInWithGoogle()} disabled={loading}>
+          {loading ? "Redirecting..." : "Continue with Google"}
+        </button>
+
+        <div className="login-divider">
+          <span>or</span>
+        </div>
+
+        <form className="login-form" onSubmit={(event) => void onSubmitEmail(event)}>
+          <label>
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              autoComplete="email"
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              minLength={6}
+              autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+            />
+          </label>
+          <button type="submit" className="btn-secondary" disabled={loading || !email || !password}>
+            {loading
+              ? "Please wait..."
+              : mode === "sign-in"
+                ? "Sign in with email"
+                : "Create account"}
+          </button>
+        </form>
+
+        <p className="login-note">
+          {mode === "sign-in" ? (
+            <>
+              Don't have an account?{" "}
+              <button type="button" className="link-button" onClick={() => setMode("sign-up")}>
+                Create one
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{" "}
+              <button type="button" className="link-button" onClick={() => setMode("sign-in")}>
+                Sign in
+              </button>
+            </>
+          )}
+        </p>
+      </div>
     </main>
   );
 }

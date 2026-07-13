@@ -64,16 +64,20 @@ function LoginForm() {
 
   return (
     <main className="login-shell">
-      <section className="login-card">
-        <p className="eyebrow">TruthPixel reviewer dashboard</p>
+      <div className="frame login-card">
+        <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+        <div className="eyebrow">
+          <span className="eyebrow-dot" />
+          TruthPixel reviewer dashboard
+        </div>
         <h1>Sign in to review claims</h1>
-        <p className="hero-copy">
+        <p className="hero-copy" style={{ margin: 0 }}>
           Reviewer access is restricted to accounts provisioned for your organization.
         </p>
-        {error && <p className="error-banner">{error}</p>}
+        {error && <p className="error">{error}</p>}
         <button
           type="button"
-          className="primary-button"
+          className="btn-primary"
           onClick={() => void signInWithGoogle()}
           disabled={loading}
         >
@@ -105,7 +109,7 @@ function LoginForm() {
               autoComplete="current-password"
             />
           </label>
-          <button type="submit" disabled={loading || !email || !password}>
+          <button type="submit" className="btn-secondary" disabled={loading || !email || !password}>
             {loading ? "Signing in..." : "Sign in with email"}
           </button>
         </form>
@@ -113,7 +117,7 @@ function LoginForm() {
           No account yet? Ask an admin to invite you via the Supabase project's Auth &gt; Users
           panel — self-signup is intentionally not exposed on this internal tool.
         </p>
-      </section>
+      </div>
     </main>
   );
 }

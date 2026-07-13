@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createSupabaseBrowserClient } from "./lib/supabase-browser";
+import { riskStamp, riskToneName } from "./theme";
 import type { AgentFinding, ClaimArtifact, SignalResult, StoredClaim } from "./types";
 import {
   LAYER_LABELS,
@@ -16,6 +17,14 @@ import {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const SUPPORTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+const LOADING_STEPS = [
+  "Uploading image",
+  "Running L1-L5 signal scan",
+  "Cost-gated agent pass",
+  "Fusing signals into risk score",
+  "Preparing report",
+];
 
 async function buildErrorMessage(response: Response): Promise<string> {
   let detail = `${response.status} ${response.statusText}`;
@@ -54,13 +63,6 @@ function artifactUrl(artifact: ClaimArtifact): string {
   return `${API_URL}${artifact.download_path}`;
 }
 
-function getRiskTone(report: StoredClaim | null): "idle" | "review" | "monitor" {
-  if (!report) {
-    return "idle";
-  }
-  return report.fusion.needs_review ? "review" : "monitor";
-}
-
 function providerLabel(signal: SignalResult): string {
   return typeof signal.evidence.provider === "string" ? signal.evidence.provider : signal.model_version;
 }
@@ -89,10 +91,6 @@ function signalHeadline(signal: SignalResult): string {
   return "Lower concern";
 }
 
-function findingTone(finding: AgentFinding): "quiet" | "alert" {
-  return finding.score !== null && finding.score >= 0.6 ? "alert" : "quiet";
-}
-
 function describeHeatmapState(
   l2Signal: SignalResult | null,
   heatmapArtifact: ClaimArtifact | null
@@ -116,16 +114,76 @@ function describeHeatmapState(
   return typeof l2Signal.evidence.note === "string" ? l2Signal.evidence.note : null;
 }
 
+// Drag-to-reveal comparison between the original upload and the forensic heatmap overlay —
+// both real artifacts already fetched, no fake blob/position data like the source mockup.
+function HeatmapCompareSlider({ originalSrc, heatmapSrc }: { originalSrc: string; heatmapSrc: string }) {
+  const [pct, setPct] = useState(50);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+
+  function updateFromClientX(clientX: number) {
+    const el = frameRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const next = ((clientX - rect.left) / rect.width) * 100;
+    setPct(Math.min(100, Math.max(0, next)));
+  }
+
+  useEffect(() => {
+    function onMove(event: PointerEvent) {
+      if (!draggingRef.current) return;
+      updateFromClientX(event.clientX);
+    }
+    function onUp() {
+      draggingRef.current = false;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={frameRef}
+      className="compare-frame"
+      onPointerDown={(event) => {
+        draggingRef.current = true;
+        updateFromClientX(event.clientX);
+      }}
+    >
+      <img src={originalSrc} alt="Original upload" className="compare-base" />
+      <div className="compare-clip" style={{ width: `${pct}%` }}>
+        <img src={heatmapSrc} alt="Heatmap overlay" className="compare-overlay" />
+      </div>
+      <div className="compare-handle" style={{ left: `${pct}%` }}>
+        <div className="compare-handle-line" />
+        <div className="compare-handle-grip">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="18 8 22 12 18 16" />
+            <polyline points="6 8 2 12 6 16" />
+            <line x1="2" x2="22" y1="12" y2="12" />
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type Phase = "idle" | "loading" | "error" | "done";
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [report, setReport] = useState<StoredClaim | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showHeatmap, setShowHeatmap] = useState(true);
-  const [heatmapOpacity, setHeatmapOpacity] = useState(72);
   const [dragActive, setDragActive] = useState(false);
   const [limitReached, setLimitReached] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
+  const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -134,6 +192,21 @@ export default function Home() {
       }
     };
   }, [preview]);
+
+  // Cosmetic pacing only — the backend returns all five layers at once, this just gives the
+  // long real wait (15-90s, worse on a cold start) something to look at instead of a bare
+  // spinner. Labels are deliberately generic ("running signal scan"), not fake per-layer
+  // done/pending states tied to nothing real.
+  useEffect(() => {
+    if (phase !== "loading") {
+      setLoadingStep(0);
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setLoadingStep((current) => Math.min(current + 1, LOADING_STEPS.length - 1));
+    }, 3500);
+    return () => window.clearInterval(interval);
+  }, [phase]);
 
   function onFileChange(nextFile: File | null) {
     if (preview) {
@@ -144,7 +217,7 @@ export default function Home() {
     setPreview(null);
     setReport(null);
     setError(null);
-    setHeatmapOpacity(72);
+    setPhase("idle");
 
     if (!nextFile) {
       return;
@@ -167,7 +240,7 @@ export default function Home() {
       return;
     }
 
-    setLoading(true);
+    setPhase("loading");
     setError(null);
     setLimitReached(false);
     setReport(null);
@@ -204,431 +277,336 @@ export default function Home() {
       }
       const payload = (await response.json()) as StoredClaim;
       setReport(payload);
-      setShowHeatmap(Boolean(getArtifactByKind(payload.artifacts, "heatmap")));
+      setPhase("done");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Something went wrong");
-    } finally {
-      setLoading(false);
+      setPhase("error");
     }
+  }
+
+  function resetFlow() {
+    onFileChange(null);
   }
 
   const originalArtifact = report ? getArtifactByKind(report.artifacts, "original_upload") : undefined;
   const heatmapArtifact = report ? getArtifactByKind(report.artifacts, "heatmap") : undefined;
   const l2Signal = report?.signals.find((signal) => signal.layer === "l2_forensics") ?? null;
   const heatmapDiagnostic = describeHeatmapState(l2Signal, heatmapArtifact ?? null);
-  const riskTone = getRiskTone(report);
 
   return (
     <main className="page-shell">
-      <section className="hero-grid">
-        <div className="hero-card hero-main">
-          <p className="eyebrow">TruthPixel public checker</p>
-          <h1>Upload one image. Get a real multi-signal integrity report.</h1>
-          <p className="tagline">
-            This public surface uses the same backend pipeline as the B2B API and reviewer
-            dashboard, then turns the output into an evidence-led report instead of a binary
-            verdict.
-          </p>
-          <div className="hero-pills">
-            <span>AI-generation detection</span>
-            <span>Edit forensics + heatmap</span>
-            <span>Screenshot / recapture checks</span>
-            <span>Human review still decides</span>
-          </div>
-          <div className="hero-actions">
-            <button type="button" onClick={onSubmit} disabled={!file || loading}>
-              {loading ? "Analyzing..." : "Run integrity check"}
-            </button>
-            <p>
-              Public mode submits only the image. No order ID or listing context is required, so
-              the consumer flow stays thin while the backend gracefully limits context-heavy checks.
-            </p>
-          </div>
-        </div>
-
-        <aside className="hero-card hero-side">
-          <div className="hero-side-block">
-            <span className="mini-label">What this page is</span>
-            <strong>Top-of-funnel product surface</strong>
-            <p>
-              Fast self-serve checks for a single image, designed to show the full fusion story
-              before a team ever integrates the API.
-            </p>
-          </div>
-          <div className="hero-side-block">
-            <span className="mini-label">Current runtime</span>
-            <strong>Same backend contract as `POST /v1/claims`</strong>
-            <p>
-              No frontend-only detection logic lives here. The UI only uploads a file and renders
-              the stored-claim response the backend returns.
-            </p>
-          </div>
-        </aside>
-      </section>
-
-      <section className="workspace-grid">
-        <section className="panel upload-panel">
-          <div className="section-heading">
-            <div>
-              <h2>Upload an image</h2>
-              <p>
-                Public upload only: one image, one report, no enterprise case context. Best for
-                quick checks, demos, and early product discovery.
+      <div className="shell-inner">
+        {phase === "idle" && (
+          <>
+            <div className="center-block">
+              <div className="eyebrow">
+                <span className="eyebrow-dot" />
+                SIG_SCAN // image integrity
+              </div>
+              <h1 className="page-title">Verify any image in seconds</h1>
+              <p className="page-sub">
+                AI-generation, edit forensics and screenshot/recapture detection — fused into
+                one explainable risk report.
               </p>
             </div>
-            <div className="upload-meta">
-              <span>15 MB max</span>
-              <span>JPG / PNG / WEBP</span>
-              <span>One image at a time</span>
-            </div>
-          </div>
 
-          <label
-            className={dragActive ? "dropzone is-active" : "dropzone"}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragActive(true);
-            }}
-            onDragLeave={() => setDragActive(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragActive(false);
-              onFileChange(event.dataTransfer.files?.[0] ?? null);
-            }}
-          >
-            <span className="dropzone-kicker">{file ? "Replace image" : "Drop image here"}</span>
-            <strong>{file ? file.name : "Choose a file or drag one into the workspace"}</strong>
-            <p>
-              TruthPixel will run the shared L1-L5 pipeline, render any available forensic heatmap,
-              and return a report you can inspect or escalate.
-            </p>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-            />
-          </label>
-
-          <div className="process-strip">
-            <div className="process-step">
-              <span>1</span>
-              <div>
-                <strong>Select image</strong>
-                <p>Client-side size and type checks run before upload.</p>
-              </div>
-            </div>
-            <div className="process-step">
-              <span>2</span>
-              <div>
-                <strong>Shared backend analysis</strong>
-                <p>Same stored-claim contract as the API and reviewer surfaces.</p>
-              </div>
-            </div>
-            <div className="process-step">
-              <span>3</span>
-              <div>
-                <strong>Human-readable result</strong>
-                <p>Risk score, evidence breakdown, artifacts, and agent notes.</p>
-              </div>
-            </div>
-          </div>
-
-          {file ? (
-            <div className="selected-file">
-              <div>
-                <strong>{file.name}</strong>
-                <p>{fileSummary(file)}</p>
-              </div>
-              <button type="button" className="secondary-button" onClick={() => onFileChange(null)}>
-                Clear
-              </button>
-            </div>
-          ) : (
-            <div className="idle-note">
-              <strong>No image selected yet.</strong>
-              <p>
-                Choose a file to unlock the preview and run the same fused scoring path used across
-                the product.
-              </p>
-            </div>
-          )}
-        </section>
-
-        <aside className="panel preview-panel">
-          <div className="preview-header">
-            <div>
-              <h2>Preview</h2>
-              <p>Inspect the exact upload before it goes to the backend.</p>
-            </div>
-            {preview && <span className="preview-badge">Ready to analyze</span>}
-          </div>
-
-          {preview ? (
-            <div className="preview-frame">
-              <img src={preview} alt="Selected upload preview" className="preview" />
-            </div>
-          ) : (
-            <div className="empty-stage">
-              <strong>Image preview appears here</strong>
-              <p>
-                Use this surface for a single-image check when you want to see the same fused report
-                without building an integration first.
-              </p>
-            </div>
-          )}
-
-          <div className="preview-footnote">
-            <span>A few free checks anonymously, more once signed in.</span>
-            <span>Sign in with Google or email — no API key needed here.</span>
-          </div>
-        </aside>
-      </section>
-
-      {error && (
-        <p className="error">
-          {error}
-          {limitReached && (
-            <>
-              {" "}
-              <a href="/login?reason=limit" className="link-button">
-                Sign in to keep checking images
-              </a>
-            </>
-          )}
-        </p>
-      )}
-
-      <section className="policy-grid">
-        <article className="policy-card">
-          <h2>What you get back</h2>
-          <p>
-            A fused fraud/manipulation risk score, layer-by-layer signal breakdown, artifact access,
-            and any available heatmap overlay from the forensics path.
-          </p>
-        </article>
-        <article className="policy-card">
-          <h2>What this page avoids</h2>
-          <p>
-            No fake certainty, no frontend-only model logic, and no separate consumer-grade scoring
-            rubric that drifts away from the enterprise product.
-          </p>
-        </article>
-        <article className="policy-card">
-          <h2>Retention and privacy</h2>
-          <p>
-            Treat uploads as backend claims, not ephemeral chat attachments. Operators still need a
-            formal retention policy if they expose anonymous uploads publicly.
-          </p>
-        </article>
-        <article className="policy-card accent-card">
-          <h2>Higher-volume path</h2>
-          <p>
-            Teams that need repeat use should graduate to the API or reviewer dashboard. This page
-            stays intentionally thin so it remains honest, fast, and easy to host.
-          </p>
-        </article>
-      </section>
-
-      {report && (
-        <section className="report-shell">
-          <section className={`verdict-band tone-${riskTone}`}>
-            <div className="verdict-copy">
-              <p className="eyebrow">Latest report</p>
-              <h2>
-                {report.fusion.needs_review
-                  ? "Escalate this image for human review"
-                  : "Lower-confidence fraud or manipulation signal"}
-              </h2>
-              <p>
-                TruthPixel is providing a confidence-scored assessment, not a verdict. This public
-                surface keeps the same evidence-first framing as the enterprise flow.
-              </p>
-            </div>
-            <div className="verdict-score">
-              <strong>{formatPercent(report.fusion.risk_score)}</strong>
-              <span>Fused risk score</span>
-            </div>
-          </section>
-
-          <section className="report-metrics">
-            <div className="metric-card">
-              <span>Submission scope</span>
-              <strong>{describeSubmissionScope(report)}</strong>
-            </div>
-            <div className="metric-card">
-              <span>Claim ID</span>
-              <strong>{report.claim_id}</strong>
-            </div>
-            <div className="metric-card">
-              <span>Created</span>
-              <strong>{formatTimestamp(report.created_at)}</strong>
-            </div>
-            <div className="metric-card">
-              <span>Artifacts</span>
-              <strong>{report.artifacts.length}</strong>
-            </div>
-          </section>
-
-          <section className="report-grid">
-            <article className="panel stage-panel">
-              <div className="section-heading">
-                <div>
-                  <h2>Artifact stage</h2>
-                  <p>Overlay forensic heatmaps on the stored upload whenever the backend emits them.</p>
-                </div>
-                {heatmapArtifact && (
-                  <div className="stage-controls">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => setShowHeatmap((current) => !current)}
-                    >
-                      {showHeatmap ? "Hide heatmap" : "Show heatmap"}
-                    </button>
-                    <label className="slider-field">
-                      <span>Overlay</span>
-                      <input
-                        type="range"
-                        min="20"
-                        max="100"
-                        value={heatmapOpacity}
-                        onChange={(event) => setHeatmapOpacity(Number(event.target.value))}
-                      />
-                    </label>
+            <div className="frame">
+              <span className="bracket-tl" />
+              <span className="bracket-tr" />
+              <span className="bracket-bl" />
+              <span className="bracket-br" />
+              {file && preview ? (
+                <div className="selected-preview">
+                  <img src={preview} alt="Selected upload preview" />
+                  <div className="mono-row">
+                    <span>FILE {file.name}</span>
+                    <span style={{ opacity: 0.5 }}>·</span>
+                    <span>{fileSummary(file)}</span>
                   </div>
-                )}
-              </div>
-
-              {originalArtifact ? (
-                <div className="artifact-stage">
-                  <img
-                    src={artifactUrl(originalArtifact)}
-                    alt="Original uploaded image"
-                    className="artifact-image"
-                  />
-                  {heatmapArtifact && showHeatmap && (
-                    <img
-                      src={artifactUrl(heatmapArtifact)}
-                      alt="Heatmap overlay"
-                      className="artifact-image artifact-overlay"
-                      style={{ opacity: heatmapOpacity / 100 }}
-                    />
-                  )}
+                  <div className="action-row">
+                    <button type="button" className="btn-secondary" onClick={() => onFileChange(null)}>
+                      Remove
+                    </button>
+                    <button type="button" className="btn-primary" onClick={onSubmit}>
+                      Run integrity scan →
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <p className="empty-copy">The backend response did not include a stored original artifact.</p>
+                <label
+                  className={dragActive ? "dropzone-label is-active" : "dropzone-label"}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setDragActive(true);
+                  }}
+                  onDragLeave={() => setDragActive(false)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setDragActive(false);
+                    onFileChange(event.dataTransfer.files?.[0] ?? null);
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+                  />
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+                    <path d="M12 12v9" />
+                    <path d="m16 16-4-4-4 4" />
+                  </svg>
+                  <div>
+                    <div className="drop-title">Drop an image, or click to browse</div>
+                    <div className="drop-sub">JPEG · PNG · WEBP — max 15MB</div>
+                  </div>
+                </label>
               )}
+            </div>
+            <p className="footnote">A few free checks anonymously, more once signed in.</p>
 
-              {heatmapDiagnostic && <p className="artifact-note">{heatmapDiagnostic}</p>}
-
-              <div className="artifact-list">
-                {report.artifacts.length > 0 ? (
-                  report.artifacts.map((artifact) => (
-                    <a
-                      key={artifact.id}
-                      href={artifactUrl(artifact)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="artifact-link"
-                    >
-                      <div>
-                        <strong>{artifact.kind.replace(/_/g, " ")}</strong>
-                        <span>{artifact.filename}</span>
-                      </div>
-                      <em>{formatBytes(artifact.byte_size)}</em>
+            {error && (
+              <p className="error">
+                {error}
+                {limitReached && (
+                  <>
+                    {" "}
+                    <a href="/login?reason=limit" className="link-button">
+                      Sign in to keep checking images
                     </a>
-                  ))
-                ) : (
-                  <p className="empty-copy">No downloadable artifacts were returned for this claim.</p>
+                  </>
                 )}
-              </div>
-            </article>
+              </p>
+            )}
 
-            <article className="panel summary-panel">
-              <div className="summary-block">
-                <h2>Plain-English summary</h2>
-                <p className="report-text">{report.report_text}</p>
-              </div>
-              <div className="summary-note">
-                <strong>Important context</strong>
-                <p>
-                  Public submissions intentionally omit listing images and order metadata, so context
-                  heavy signals should be read as narrower than a tenant-backed return-fraud case.
-                </p>
-              </div>
-            </article>
-          </section>
-
-          <section className="signal-section">
-            <div className="section-heading">
-              <div>
-                <h2>Signal breakdown</h2>
-                <p>Every layer contributes separately to the final fused score so the review story stays legible.</p>
-              </div>
+            <div className="policy-grid">
+              <article className="policy-card frame">
+                <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+                <h2>What you get back</h2>
+                <p>A fused fraud/manipulation risk score, layer-by-layer signal breakdown, and any available heatmap overlay.</p>
+              </article>
+              <article className="policy-card frame">
+                <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+                <h2>Same backend, no shortcuts</h2>
+                <p>No frontend-only detection logic. Same stored-claim contract as the API and reviewer dashboard.</p>
+              </article>
             </div>
+          </>
+        )}
 
-            <div className="signal-grid">
-              {report.signals.map((signal) => (
-                <article key={signal.layer} className="signal-card">
-                  <div className="signal-topline">
-                    <span className="signal-layer">{LAYER_LABELS[signal.layer] ?? signal.layer}</span>
-                    <span className="signal-contribution">{contributionFor(signal, report)}</span>
-                  </div>
-                  <h3>{signalHeadline(signal)}</h3>
-                  <div className="signal-metrics">
-                    <div>
-                      <span>Score</span>
-                      <strong>{signal.error ? "Unavailable" : formatScore(signal.score)}</strong>
-                    </div>
-                    <div>
-                      <span>Confidence</span>
-                      <strong>{formatScore(signal.confidence)}</strong>
-                    </div>
-                  </div>
-                  <p className="signal-provider">{providerLabel(signal)}</p>
-                  {signal.error && <p className="signal-warning">{signal.error}</p>}
-                </article>
-              ))}
+        {phase === "loading" && (
+          <>
+            <div className="section-label">// 00 · running_signal_scan.sh</div>
+            <div className="frame scan-frame">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+              {preview && <img src={preview} alt="Analyzing" />}
+              <div className="sweep-overlay" />
+              <div className="dim-overlay" />
             </div>
-          </section>
-
-          {report.agent_findings.length > 0 && (
-            <section className="agent-section">
-              <div className="section-heading">
-                <div>
-                  <h2>Agent findings</h2>
-                  <p>When agent passes run, they add semantic or plausibility notes on top of deterministic signals.</p>
+            {LOADING_STEPS.map((label, index) => {
+              const isDone = index < loadingStep;
+              const isActive = index === loadingStep;
+              return (
+                <div className="term-row" key={label}>
+                  <span
+                    className="term-bracket"
+                    style={{
+                      color: isDone ? "var(--safe)" : isActive ? "var(--accent)" : "var(--text-faint)",
+                      animation: isActive ? "tp-blink 1s step-start infinite" : "none",
+                    }}
+                  >
+                    {isDone ? "[✓]" : isActive ? "[..]" : "[ ]"}
+                  </span>
+                  <span
+                    className="term-label"
+                    style={{
+                      color: isDone || isActive ? "var(--text)" : "var(--text-faint)",
+                      fontWeight: isActive ? 700 : 500,
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span
+                    className="term-status"
+                    style={{ color: isDone ? "var(--safe)" : isActive ? "var(--accent)" : "var(--text-faint)" }}
+                  >
+                    {isDone ? "done" : isActive ? "running" : "queued"}
+                  </span>
                 </div>
-              </div>
-              <div className="agent-grid">
-                {report.agent_findings.map((finding) => (
-                  <article key={finding.agent} className={`agent-card tone-${findingTone(finding)}`}>
-                    <div className="agent-header">
-                      <strong>{finding.agent.replace(/_/g, " ")}</strong>
-                      <span>
+              );
+            })}
+          </>
+        )}
+
+        {phase === "error" && (
+          <div className="error-stage">
+            <div className="error-icon-wrap">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+              </svg>
+            </div>
+            <h2>scan_failed.exception</h2>
+            <p className="page-sub">
+              {error}
+              {limitReached && (
+                <>
+                  {" "}
+                  <a href="/login?reason=limit" className="link-button">
+                    Sign in to keep checking images
+                  </a>
+                </>
+              )}
+            </p>
+            <button type="button" className="btn-primary" onClick={onSubmit}>
+              Retry scan
+            </button>
+          </div>
+        )}
+
+        {phase === "done" && report && (
+          <>
+            {(() => {
+              const tone = riskToneName(report.fusion.risk_score);
+              const stamp = riskStamp(report.fusion.risk_score);
+              const offset = 314.159 * (1 - report.fusion.risk_score);
+              const label = report.fusion.needs_review ? "Needs review" : "Likely authentic";
+              return (
+                <div className="frame verdict-card">
+                  <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+                  <svg width="90" height="90" viewBox="0 0 120 120" style={{ flex: "none" }}>
+                    <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surface2)" strokeWidth="9" />
+                    <circle
+                      cx="60"
+                      cy="60"
+                      r="50"
+                      fill="none"
+                      stroke={`var(--${tone})`}
+                      strokeWidth="9"
+                      strokeLinecap="round"
+                      strokeDasharray="314.159"
+                      strokeDashoffset={offset}
+                      transform="rotate(-90 60 60)"
+                    />
+                  </svg>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="risk-number">{formatPercent(report.fusion.risk_score)}</div>
+                    <div className="risk-label" style={{ color: `var(--${tone})` }}>{label}</div>
+                    <div className="mono-row" style={{ marginTop: 10 }}>
+                      <span>CASE {report.claim_id.slice(0, 8)}</span>
+                      <span style={{ opacity: 0.5 }}>·</span>
+                      <span>{describeSubmissionScope(report)}</span>
+                    </div>
+                  </div>
+                  <div className="stamp" style={{ color: `var(--${tone})`, borderColor: `var(--${tone})` }}>
+                    {stamp}
+                  </div>
+                  <button type="button" className="btn-secondary" onClick={resetFlow}>
+                    New scan
+                  </button>
+                </div>
+              );
+            })()}
+
+            <div className="section-card frame">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+              <div className="section-label">// 01 · manipulation_heatmap.render</div>
+              <p className="page-sub" style={{ margin: "0 0 14px", maxWidth: "none" }}>
+                Original left, region-level forensic overlay right — drag to compare.
+              </p>
+              {originalArtifact && heatmapArtifact ? (
+                <HeatmapCompareSlider
+                  originalSrc={artifactUrl(originalArtifact)}
+                  heatmapSrc={artifactUrl(heatmapArtifact)}
+                />
+              ) : originalArtifact ? (
+                <img src={artifactUrl(originalArtifact)} alt="Original upload" style={{ width: "100%", maxHeight: 420, objectFit: "cover" }} />
+              ) : (
+                <p className="page-sub" style={{ maxWidth: "none" }}>No stored artifact was returned for this claim.</p>
+              )}
+              {heatmapDiagnostic && <p className="compare-note">{heatmapDiagnostic}</p>}
+            </div>
+
+            <div className="callout">
+              <div className="callout-label">// summary.txt</div>
+              <p>{report.report_text}</p>
+            </div>
+
+            <div className="section-card frame">
+              <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+              <div className="section-label">// 02 · signal_breakdown.json</div>
+              {report.signals.map((signal) => {
+                const score = signal.score ?? 0;
+                const tone = riskToneName(score);
+                const expanded = expandedLayer === signal.layer;
+                return (
+                  <div className="signal-row-wrap" key={signal.layer}>
+                    <div
+                      className="signal-row"
+                      onClick={() => setExpandedLayer(expanded ? null : signal.layer)}
+                    >
+                      <span className="badge" style={{ background: `color-mix(in oklch, var(--${tone}) 16%, transparent)`, color: `var(--${tone})` }}>
+                        L{signal.layer.slice(1, 2)}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="signal-label">{LAYER_LABELS[signal.layer] ?? signal.layer}</div>
+                        <div className="bar-track">
+                          <div className="bar-fill" style={{ width: `${Math.round(score * 100)}%`, background: `var(--${tone})` }} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="score-val">{signal.error ? "—" : formatScore(signal.score)}</div>
+                        <div className="score-sub">{contributionFor(signal, report)} wt</div>
+                      </div>
+                      <span className={expanded ? "chevron expanded" : "chevron"}>▸</span>
+                    </div>
+                    {expanded && (
+                      <div className="expand-pad">
+                        <p className="expand-blurb">{signalHeadline(signal)}</p>
+                        <div className="expand-note">{signal.error || providerLabel(signal)}</div>
+                        <div className="expand-meta">
+                          confidence {formatScore(signal.confidence)} · model {signal.model_version}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {report.agent_findings.length > 0 && (
+              <div className="section-card frame">
+                <span className="bracket-tl" /><span className="bracket-tr" /><span className="bracket-bl" /><span className="bracket-br" />
+                <div className="section-label">// 03 · agent_findings.log</div>
+                {report.agent_findings.map((finding: AgentFinding) => (
+                  <div className="agent-row" key={finding.agent}>
+                    <div className="agent-topline">
+                      <strong className="agent-name">{finding.agent.replace(/_/g, " ")}</strong>
+                      <span className="agent-meta">
                         {finding.score !== null
                           ? `score ${formatScore(finding.score)} · conf ${formatScore(finding.confidence)}`
-                          : "No score returned"}
+                          : "no score returned"}
                       </span>
                     </div>
                     {finding.findings.length > 0 ? (
-                      <ul>
+                      <ul className="findings-list">
                         {finding.findings.map((item, index) => (
                           <li key={`${finding.agent}-${index}`}>{item}</li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="agent-empty">No specific findings were returned on this run.</p>
+                      <p className="no-findings">no findings reported</p>
                     )}
-                  </article>
+                  </div>
                 ))}
               </div>
-            </section>
-          )}
+            )}
 
-          <p className="disclaimer">{report.disclaimer}</p>
-        </section>
-      )}
+            <p className="disclaimer">{report.disclaimer}</p>
+          </>
+        )}
+      </div>
     </main>
   );
 }
